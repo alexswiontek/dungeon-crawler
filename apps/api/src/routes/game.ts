@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import {
   type CharacterType,
   type ClientMessage,
+  type EnemyType,
+  type EnemyVariant,
   type GameState,
   type GameStatus,
   isDirection,
@@ -89,6 +91,8 @@ interface LeaderboardDoc {
   score: number;
   floor: number;
   killedBy: string | null;
+  killedByType: EnemyType | null;
+  killedByVariant: EnemyVariant | null;
   createdAt: Date;
 }
 
@@ -172,15 +176,21 @@ export async function gameRoutes(fastify: FastifyInstance) {
       // If player died, submit to leaderboard
       if (currentStatus === 'dead') {
         const killedByEvent = events.find(isPlayerDiedEvent);
-        const killedBy = killedByEvent
-          ? killedByEvent.data.killedBy
-          : 'unknown';
+        if (!killedByEvent) {
+          fastify.log.error(
+            `CRITICAL: Player died but no player_died event found for game ${id}`,
+          );
+          throw new Error('Player died without death event - data corruption');
+        }
+        const { killedBy, killedByType, killedByVariant } = killedByEvent.data;
         await leaderboard().insertOne({
           _id: randomUUID(),
           playerName: game.playerName,
           score: game.score,
           floor: game.floor,
           killedBy,
+          killedByType,
+          killedByVariant,
           createdAt: new Date(),
         });
       }
@@ -221,6 +231,8 @@ export async function gameRoutes(fastify: FastifyInstance) {
           score: game.score,
           floor: game.floor,
           killedBy: null,
+          killedByType: null,
+          killedByVariant: null,
           createdAt: new Date(),
         });
       }
@@ -386,15 +398,24 @@ export async function gameRoutes(fastify: FastifyInstance) {
             // Handle death/victory leaderboard submission
             if (currentStatus === 'dead') {
               const killedByEvent = events.find(isPlayerDiedEvent);
-              const killedBy = killedByEvent
-                ? killedByEvent.data.killedBy
-                : 'unknown';
+              if (!killedByEvent) {
+                fastify.log.error(
+                  `CRITICAL: Player died but no player_died event found for game ${id}`,
+                );
+                throw new Error(
+                  'Player died without death event - data corruption',
+                );
+              }
+              const { killedBy, killedByType, killedByVariant } =
+                killedByEvent.data;
               await leaderboard().insertOne({
                 _id: randomUUID(),
                 playerName: game.playerName,
                 score: game.score,
                 floor: game.floor,
                 killedBy,
+                killedByType,
+                killedByVariant,
                 createdAt: new Date(),
               });
             } else if (currentStatus === 'won') {
@@ -404,6 +425,8 @@ export async function gameRoutes(fastify: FastifyInstance) {
                 score: game.score,
                 floor: game.floor,
                 killedBy: null,
+                killedByType: null,
+                killedByVariant: null,
                 createdAt: new Date(),
               });
             }
@@ -437,15 +460,24 @@ export async function gameRoutes(fastify: FastifyInstance) {
 
               // Handle death leaderboard submission
               const killedByEvent = events.find(isPlayerDiedEvent);
-              const killedBy = killedByEvent
-                ? killedByEvent.data.killedBy
-                : 'unknown';
+              if (!killedByEvent) {
+                fastify.log.error(
+                  `CRITICAL: Player died but no player_died event found for game ${id}`,
+                );
+                throw new Error(
+                  'Player died without death event - data corruption',
+                );
+              }
+              const { killedBy, killedByType, killedByVariant } =
+                killedByEvent.data;
               await leaderboard().insertOne({
                 _id: randomUUID(),
                 playerName: game.playerName,
                 score: game.score,
                 floor: game.floor,
                 killedBy,
+                killedByType,
+                killedByVariant,
                 createdAt: new Date(),
               });
             }

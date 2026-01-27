@@ -1158,7 +1158,11 @@ function enemyAttackPlayer(state: GameState, enemy: Enemy): GameEvent[] {
       id: generateEventId(),
       type: 'player_died',
       message: `You were killed by a ${enemy.displayName}!`,
-      data: { killedBy: enemy.type },
+      data: {
+        killedBy: enemy.displayName,
+        killedByType: enemy.type,
+        killedByVariant: enemy.variant,
+      },
     });
   }
 

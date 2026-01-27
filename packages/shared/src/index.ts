@@ -378,7 +378,9 @@ export interface LeaderboardEntry {
   playerName: string;
   score: number;
   floor: number;
-  killedBy: string | null;
+  killedBy: string | null; // Display name (e.g., "Champion Rat")
+  killedByType: EnemyType | null; // Enemy type (rat, skeleton, orc, dragon)
+  killedByVariant: EnemyVariant | null; // Enemy variant (normal, elite, champion)
   createdAt: Date;
 }
 
@@ -439,7 +441,9 @@ export interface PlayerAttackedEventData {
 }
 
 export interface PlayerDiedEventData {
-  killedBy: string;
+  killedBy: string; // Display name (e.g., "Champion Rat")
+  killedByType: EnemyType; // Enemy type (rat, skeleton, orc, dragon)
+  killedByVariant: EnemyVariant; // Enemy variant (normal, elite, champion)
 }
 
 export interface PlayerHealedEventData {
@@ -514,7 +518,9 @@ export function isPlayerDiedEvent(
   return (
     event.type === 'player_died' &&
     event.data !== undefined &&
-    'killedBy' in event.data
+    'killedBy' in event.data &&
+    'killedByType' in event.data &&
+    'killedByVariant' in event.data
   );
 }
 

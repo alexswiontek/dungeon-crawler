@@ -4,6 +4,14 @@ import { api } from '@/api';
 import { Button } from '@/components/Button';
 import { cn } from '@/utils/cn';
 
+function getKilledByStyle(entry: LeaderboardEntry): string {
+  if (!entry.killedBy) return 'text-success';
+  // Match the in-game variant tints
+  if (entry.killedByVariant === 'champion') return 'text-red-400 font-bold'; // Red/purple tint
+  if (entry.killedByVariant === 'elite') return 'text-blue-400 font-semibold'; // Blue tint
+  return 'text-gray-300'; // Normal enemy - neutral
+}
+
 export function Leaderboard({ onBack }: { onBack: () => void }) {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,12 +58,7 @@ export function Leaderboard({ onBack }: { onBack: () => void }) {
                 <td className="p-2">{entry.playerName}</td>
                 <td className="p-2 text-right text-player">{entry.score}</td>
                 <td className="p-2 text-right">{entry.floor}</td>
-                <td
-                  className={cn(
-                    'p-2',
-                    entry.killedBy ? 'text-accent' : 'text-success',
-                  )}
-                >
+                <td className={cn('p-2', getKilledByStyle(entry))}>
                   {entry.killedBy || 'Escaped!'}
                 </td>
               </tr>
