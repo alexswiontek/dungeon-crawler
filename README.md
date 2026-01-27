@@ -43,6 +43,8 @@ cp apps/ui/.env.example apps/ui/.env
 |-----|----------|-------------|
 | API | `PORT` | Server port (default: `3000`) |
 | API | `MONGODB_URI` | MongoDB connection string |
+| API | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins (optional) |
+| API | `NODE_ENV` | Environment (`development`, `production`, `test`) (default: `development`) |
 | UI | `VITE_API_URL` | API URL for production (empty for local dev) |
 
 ### Development
@@ -89,7 +91,7 @@ pnpm typecheck        # Check TypeScript types across all packages
 
 # Code quality
 pnpm lint             # Run Biome linter
-pnpm lint:fix         # Auto-fix linting issues
+pnpm format           # Auto-fix linting and formatting issues
 
 # Docker
 docker compose up     # Start all services
@@ -166,8 +168,8 @@ The server never sends data outside the player's fog of war:
 **Local development**: Copy each app's `.env.example` to `.env` (see [Configuration](#configuration)).
 
 **Production**: Set environment variables in your hosting platform (never commit `.env` files):
-- **App Runner** (API): Set `MONGODB_URI` to your Atlas connection string
-- **Amplify** (UI): Set `VITE_API_URL` to your App Runner URL
+- **Fly.io** (API): Set `MONGODB_URI` to your Atlas connection string and `ALLOWED_ORIGINS` to your frontend URL
+- **Amplify** (UI): Set `VITE_API_URL` to your Fly.io API URL
 
 ### AWS Deployment (Monorepo)
 
@@ -197,7 +199,7 @@ fly deploy
 #### MongoDB Atlas
 
 1. Create a free cluster at [mongodb.com/atlas](https://www.mongodb.com/atlas)
-2. Add your App Runner IP to the network access list (or allow all IPs for simplicity)
+2. Add your Fly.io IP to the network access list (or allow all IPs for simplicity)
 3. Create a database user and get the connection string
 
 ## License
