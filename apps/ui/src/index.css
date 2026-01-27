@@ -1,0 +1,145 @@
+@import "tailwindcss";
+
+@theme {
+  /* Background colors */
+  --color-dark: #0a0a0a;
+  --color-primary: #1a1a2e;
+  --color-secondary: #16213e;
+  --color-tertiary: #0f3460;
+
+  /* Accent colors */
+  --color-accent: #e94560;
+  --color-success: #44aa99;
+  --color-warning: #aaaa44;
+  --color-danger: #aa4444;
+  --color-gold: #b8960c;
+  --color-gold-faded: #8a7209;
+
+  /* Game element colors */
+  --color-player: #ffff00;
+  --color-item: #ff00ff;
+  --color-floor: #444444;
+  --color-wall: #666666;
+  --color-door: #aa8844;
+  --color-fog: #0e0e0e;
+
+  /* Enemy colors */
+  --color-rat: #aa8866;
+  --color-skeleton: #aaaaaa;
+  --color-orc: #66aa44;
+  --color-dragon: #ee4444;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  font-family: "Courier New", Courier, monospace;
+  background-color: var(--color-primary);
+  color: #e5e7eb;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+
+input {
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 0.625rem;
+  background-color: var(--color-secondary);
+  color: #e5e7eb;
+  border: 2px solid var(--color-tertiary);
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* Hide scrollbar while keeping scroll functionality */
+.scrollbar-hide {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Opera */
+}
+
+/* Damage flash animation - white flash then fade */
+@keyframes damage-flash {
+  0% {
+    filter: brightness(1) saturate(1);
+  }
+  15% {
+    filter: brightness(3) saturate(0);
+  }
+  30% {
+    filter: brightness(2) saturate(0.5) sepia(0.5);
+  }
+  50% {
+    filter: brightness(1.5) saturate(1) sepia(0.3);
+  }
+  100% {
+    filter: brightness(1) saturate(1);
+  }
+}
+
+.damage-flash {
+  animation: damage-flash 0.4s ease-out;
+}
+
+/* Screen shake animation for player damage */
+@keyframes screen-shake {
+  0%, 100% { transform: translate(0, 0); }
+  15% { transform: translate(-2px, -1px); }
+  30% { transform: translate(2px, 1px); }
+  45% { transform: translate(-1px, 0); }
+  60% { transform: translate(1px, -1px); }
+  75% { transform: translate(-1px, 1px); }
+}
+
+.screen-shake {
+  animation: screen-shake 0.2s ease-out;
+}
+
+/* Floating damage number animation */
+@keyframes float-damage {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(-10px) scale(1.2);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-30px) scale(0.8);
+  }
+}
+
+.damage-number {
+  animation: float-damage 0.8s ease-out forwards;
+  font-weight: bold;
+  text-shadow:
+    -1px -1px 0 #000,
+    1px -1px 0 #000,
+    -1px 1px 0 #000,
+    1px 1px 0 #000;
+  pointer-events: none;
+}
+
+/* Spell projectile orb effect */
+.spell-orb {
+  background: radial-gradient(circle, #88ffff 0%, #4488ff 50%, #2244aa 100%);
+  box-shadow: 0 0 10px #88ffff, 0 0 20px #4488ff, 0 0 30px #2244aa;
+}
