@@ -1,5 +1,5 @@
 import type { GameState } from '@dungeon-crawler/shared';
-import { getDb } from '@/services/database.js';
+import { getDb, isDatabaseHealthy } from '@/services/database.js';
 
 // WebSocket interface - use a minimal type that matches what we need
 interface GameWebSocket {
@@ -164,7 +164,7 @@ export function resumeSession(gameId: string): void {
 }
 
 // Cleanup stale sessions periodically (every minute)
-const cleanupInterval = setInterval(() => {
+const cleanupInterval = setInterval(async () => {
   const now = Date.now();
   const staleGameIds: string[] = [];
 
@@ -181,8 +181,22 @@ const cleanupInterval = setInterval(() => {
     if (session?.isPaused) continue;
 
     console.log(`Cleaning up stale session: ${gameId}`);
+
+    // Check DB health before attempting cleanup
+    const dbHealthy = await isDatabaseHealthy();
+    if (!dbHealthy) {
+      console.warn(`Skipping DB cleanup for ${gameId}: Database unhealthy`);
+      // Still remove from memory to prevent leak
+      activeSessions.delete(gameId);
+      gameStateCache.delete(gameId);
+      continue;
+    }
+
     unregisterSession(gameId).catch((err) => {
       console.error(`Failed to cleanup stale session ${gameId}:`, err);
+      // Remove from memory even if DB write fails
+      activeSessions.delete(gameId);
+      gameStateCache.delete(gameId);
     });
   }
 }, 60000);

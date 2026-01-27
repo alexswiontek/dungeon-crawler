@@ -34,14 +34,33 @@ function generateEventId(): string {
 // Visibility Filtering (Anti-Cheat)
 // ============================================
 
+/**
+ * Check if coordinates are within map bounds and visible in fog of war
+ * Returns false (not visible) for out-of-bounds coordinates with warning
+ */
+function isVisibleInFog(
+  state: GameState,
+  x: number,
+  y: number,
+  entityType: string,
+): boolean {
+  // Bounds check before accessing fog array
+  if (y < 0 || y >= MAP_HEIGHT || x < 0 || x >= MAP_WIDTH) {
+    console.warn(`${entityType} at invalid coordinates: (${x}, ${y})`);
+    return false;
+  }
+
+  return state.fog[y]?.[x] === true;
+}
+
 export function getVisibleEnemies(state: GameState): Enemy[] {
   return state.enemies.filter(
-    (e) => e.hp > 0 && state.fog[e.y]?.[e.x] === true,
+    (e) => e.hp > 0 && isVisibleInFog(state, e.x, e.y, 'Enemy'),
   );
 }
 
 export function getVisibleItems(state: GameState): Item[] {
-  return state.items.filter((i) => state.fog[i.y]?.[i.x] === true);
+  return state.items.filter((i) => isVisibleInFog(state, i.x, i.y, 'Item'));
 }
 
 export function getVisibleTiles(state: GameState): Tile[] {

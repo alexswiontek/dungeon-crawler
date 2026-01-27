@@ -20,7 +20,11 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: unknown) {
-    console.error('ErrorBoundary caught an error:', error, errorInfo);
+    try {
+      console.error('ErrorBoundary caught an error:', error, errorInfo);
+    } catch {
+      // Never crash error handler - silently ignore console failures
+    }
   }
 
   render() {

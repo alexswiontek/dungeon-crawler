@@ -18,12 +18,27 @@ import {
   englishRecommendedTransformers,
   RegExpMatcher,
 } from 'obscenity';
+import { z } from 'zod';
 
 // Profanity filter for player names
 const profanityMatcher = new RegExpMatcher({
   ...englishDataset.build(),
   ...englishRecommendedTransformers,
 });
+
+// WebSocket message validation schema
+const ClientMessageSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('move'),
+    direction: z.enum(['up', 'down', 'left', 'right']),
+  }),
+  z.object({ type: z.literal('attack') }),
+  z.object({ type: z.literal('pause') }),
+  z.object({ type: z.literal('resume') }),
+]);
+
+const MAX_MESSAGE_SIZE = 1024; // 1KB max
+const MAX_PARSE_ERRORS = 5;
 
 /**
  * Sanitize player name - clean profanity and validate
@@ -55,7 +70,7 @@ function sanitizePlayerName(name: string): {
   return { valid: true, name: trimmed };
 }
 
-import { getDb } from '@/services/database.js';
+import { getDb, isDatabaseHealthy } from '@/services/database.js';
 import {
   createNewGame,
   descendStairs,
@@ -260,6 +275,20 @@ export async function gameRoutes(fastify: FastifyInstance) {
     async (socket, request) => {
       const { id } = request.params;
 
+      // Check DB health before processing WebSocket connection
+      if (!(await isDatabaseHealthy())) {
+        console.error(
+          `Database unhealthy, rejecting WebSocket connection for ${id}`,
+        );
+        const errorMsg: ServerMessage = {
+          type: 'error',
+          message: 'Database unavailable. Please try again later.',
+        };
+        socket.send(JSON.stringify(errorMsg));
+        socket.close();
+        return;
+      }
+
       // Load game state
       let game = await games().findOne({ _id: id });
       if (!game) {
@@ -297,17 +326,22 @@ export async function gameRoutes(fastify: FastifyInstance) {
       let processingMessage = false;
       const messageQueue: (Buffer | string)[] = [];
       const MAX_QUEUE_SIZE = 5; // Limit queue to prevent flooding
+      let parseErrorCount = 0; // Track parse errors for rate limiting
 
       async function processNextMessage() {
         if (processingMessage || messageQueue.length === 0) return;
 
-        // Defensive: if queue grew beyond safe bounds, clear it to prevent memory leak
+        // Defensive: if queue grew beyond safe bounds, close connection
         if (messageQueue.length > MAX_QUEUE_SIZE * 2) {
-          messageQueue.length = 0;
-          processingMessage = false;
-          fastify.log.warn(
-            `Message queue overflow for game ${id}, cleared to prevent memory leak`,
+          console.warn(
+            `Message queue overflow for session ${id}, closing connection`,
           );
+          const errorMsg: ServerMessage = {
+            type: 'error',
+            message: 'Too many pending actions. Please reconnect.',
+          };
+          socket.send(JSON.stringify(errorMsg));
+          socket.close();
           return;
         }
 
@@ -321,7 +355,47 @@ export async function gameRoutes(fastify: FastifyInstance) {
         const messageStart = performance.now();
 
         try {
-          const message: ClientMessage = JSON.parse(rawMessage.toString());
+          // Check message size first
+          const rawMessageStr = rawMessage.toString();
+          if (rawMessageStr.length > MAX_MESSAGE_SIZE) {
+            console.warn(`Message too large: ${rawMessageStr.length} bytes`);
+            const errorMsg: ServerMessage = {
+              type: 'error',
+              message: 'Message too large',
+            };
+            socket.send(JSON.stringify(errorMsg));
+            socket.close();
+            return;
+          }
+
+          // Parse and validate message
+          let message: ClientMessage;
+          try {
+            const parsed = JSON.parse(rawMessageStr);
+            message = ClientMessageSchema.parse(parsed);
+          } catch (err) {
+            parseErrorCount++;
+            console.error(
+              `Invalid message format (${parseErrorCount}/${MAX_PARSE_ERRORS}):`,
+              err,
+            );
+
+            const errorMsg: ServerMessage = {
+              type: 'error',
+              message: 'Invalid message format',
+            };
+            socket.send(JSON.stringify(errorMsg));
+
+            // Rate limit parse errors
+            if (parseErrorCount >= MAX_PARSE_ERRORS) {
+              console.warn(
+                `Too many parse errors from ${id}, closing connection`,
+              );
+              socket.close();
+            }
+            return;
+          }
+
           // Use info level to ensure it shows in logs
           fastify.log.info(
             `[WS] Processing message type: ${message.type} for game ${id}`,
@@ -392,7 +466,18 @@ export async function gameRoutes(fastify: FastifyInstance) {
               deltas.some((d) => d.type === 'new_floor');
 
             if (isCheckpoint) {
-              await saveGameStateToDb(id);
+              try {
+                await saveGameStateToDb(id);
+              } catch (err) {
+                console.error(`Failed to save checkpoint for ${id}:`, err);
+                const errorMsg: ServerMessage = {
+                  type: 'error',
+                  message: 'Failed to save game state. Please reconnect.',
+                };
+                socket.send(JSON.stringify(errorMsg));
+                socket.close();
+                return;
+              }
             }
 
             // Handle death/victory leaderboard submission
@@ -456,7 +541,18 @@ export async function gameRoutes(fastify: FastifyInstance) {
 
             // Save to DB only on checkpoints (death)
             if (currentStatus === 'dead') {
-              await saveGameStateToDb(id);
+              try {
+                await saveGameStateToDb(id);
+              } catch (err) {
+                console.error(`Failed to save checkpoint for ${id}:`, err);
+                const errorMsg: ServerMessage = {
+                  type: 'error',
+                  message: 'Failed to save game state. Please reconnect.',
+                };
+                socket.send(JSON.stringify(errorMsg));
+                socket.close();
+                return;
+              }
 
               // Handle death leaderboard submission
               const killedByEvent = events.find(isPlayerDiedEvent);
