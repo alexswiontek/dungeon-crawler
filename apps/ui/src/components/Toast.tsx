@@ -38,7 +38,7 @@ export function Toast({
   return (
     <div
       className={cn(
-        'flex-col items-center z-50 pointer-events-none transition-all duration-300',
+        'flex-col items-center z-60 pointer-events-none transition-all duration-300',
         isVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-95',
       )}
     >
