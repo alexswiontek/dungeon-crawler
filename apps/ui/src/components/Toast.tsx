@@ -38,16 +38,16 @@ export function Toast({
   return (
     <div
       className={cn(
-        'flex-col items-center z-60 pointer-events-none transition-all duration-300',
+        'flex-col items-center pointer-events-none transition-all duration-300 w-full',
         isVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-95',
       )}
     >
       {/* Background Banner: No side borders, just a horizontal slice */}
-      <div className="relative px-6 py-2 md:px-16 md:py-4 bg-linear-to-r from-transparent via-black/80 to-transparent border-y border-white/20 backdrop-blur-sm">
+      <div className="relative w-full px-6 py-2 md:px-16 md:py-4 bg-linear-to-r from-transparent via-black/80 to-transparent border-y border-white/20 backdrop-blur-sm">
         {/* Main Title with Metallic Glint */}
         <span
           className={cn(
-            'block text-base md:text-2xl lg:text-3xl font-serif font-black tracking-wide md:tracking-widest text-transparent bg-clip-text bg-linear-to-b animate-shine text-center leading-tight',
+            'block text-base md:text-2xl lg:text-3xl font-serif font-black tracking-wide md:tracking-widest text-transparent bg-clip-text bg-linear-to-b animate-shine text-center leading-tight whitespace-nowrap',
             TOAST_THEMES[type],
           )}
         >
