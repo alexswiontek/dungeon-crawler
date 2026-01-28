@@ -10,12 +10,20 @@
     "build": "pnpm --filter @dungeon-crawler/shared build && pnpm --filter @dungeon-crawler/api build && pnpm --filter @dungeon-crawler/ui build",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "verify": "npm run format && npm run typecheck && npm run lint",
-    "typecheck": "pnpm -r typecheck"
+    "verify": "pnpm format && pnpm typecheck && pnpm lint && pnpm test",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @dungeon-crawler/shared test && pnpm --filter @dungeon-crawler/api test && pnpm --filter @dungeon-crawler/ui test",
+    "test:coverage": "pnpm --filter @dungeon-crawler/shared test:coverage && pnpm --filter @dungeon-crawler/api test:coverage && pnpm --filter @dungeon-crawler/ui test:coverage",
+    "test:shared": "pnpm --filter @dungeon-crawler/shared test",
+    "test:api": "pnpm --filter @dungeon-crawler/api test",
+    "test:ui": "pnpm --filter @dungeon-crawler/ui test"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.10",
-    "typescript": "^5.3.3"
+    "@vitest/coverage-v8": "^4.0.18",
+    "@vitest/ui": "^4.0.18",
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.18"
   },
   "engines": {
     "node": ">=25"

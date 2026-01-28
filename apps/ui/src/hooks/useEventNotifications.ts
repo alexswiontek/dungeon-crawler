@@ -40,7 +40,7 @@ export function useEventNotifications(events: GameEvent[], hasPlayer: boolean) {
   const [tooltip, setTooltip] = useState<TooltipData | null>(null);
   const toastIdRef = useRef(0);
   const tooltipIdRef = useRef(0);
-  const tooltipTimerRef = useRef<number | null>(null);
+  const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processedEventsRef = useRef<Set<string>>(new Set());
 
   // Reset all state when player is lost (game restart/disconnect)
