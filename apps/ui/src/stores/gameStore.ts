@@ -222,6 +222,7 @@ interface GameStore {
   reconnecting: boolean;
   reconnectAttempt: number;
   error: string | null;
+  hasPendingMessages: boolean;
 
   // UI state - use array instead of Set to avoid reference equality issues
   damagedEntities: string[];
@@ -234,6 +235,7 @@ interface GameStore {
   setReconnecting: (reconnecting: boolean) => void;
   setReconnectAttempt: (attempt: number) => void;
   setError: (error: string | null) => void;
+  setHasPendingMessages: (pending: boolean) => void;
   setDamagedEntities: (entities: string[]) => void;
   reset: () => void;
 }
@@ -247,6 +249,7 @@ export const useGameStore = create<GameStore>()(
     reconnecting: false,
     reconnectAttempt: 0,
     error: null,
+    hasPendingMessages: false,
     damagedEntities: [],
 
     // Actions
@@ -276,6 +279,8 @@ export const useGameStore = create<GameStore>()(
     setReconnectAttempt: (reconnectAttempt: number): void =>
       set({ reconnectAttempt }),
     setError: (error: string | null): void => set({ error }),
+    setHasPendingMessages: (hasPendingMessages: boolean): void =>
+      set({ hasPendingMessages }),
     setDamagedEntities: (damagedEntities: string[]): void =>
       set({ damagedEntities }),
 
@@ -287,6 +292,7 @@ export const useGameStore = create<GameStore>()(
         reconnecting: false,
         reconnectAttempt: 0,
         error: null,
+        hasPendingMessages: false,
         damagedEntities: [],
       }),
   })),

@@ -45,6 +45,7 @@ export function Game({
     damagedEntities,
     hasPlayer,
     status,
+    hasPendingMessages,
   } = useGameSocket(gameId);
   const { isMobile, width, height } = useWindowSize();
 
@@ -92,7 +93,7 @@ export function Game({
   // Screen shake effect
   const playerDamaged = damagedEntities.includes('player');
   const isScreenShaking = useScreenShake(playerDamaged);
-  const isLoading = !connected || reconnecting;
+  const isLoading = !connected || reconnecting || hasPendingMessages;
 
   const toggleZoom = () => {
     setZoomedOut((prev) => !prev);

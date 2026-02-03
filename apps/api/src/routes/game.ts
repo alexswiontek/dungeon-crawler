@@ -235,10 +235,16 @@ function createMessageProcessor(
                 const error =
                   err instanceof Error ? err : new Error(String(err));
                 fastify.log.error(
-                  { err: error },
-                  `Failed to save game state to DB for ${gameId}`,
+                  { err: error, gameId },
+                  'Failed to save checkpoint, closing connection',
                 );
-                // Continue anyway - state is in cache
+                const errorMsg: ServerMessage = {
+                  type: 'error',
+                  message: 'Failed to save game progress. Please reconnect.',
+                };
+                socket.send(JSON.stringify(errorMsg));
+                socket.close();
+                return;
               }
             }
 
@@ -296,9 +302,16 @@ function createMessageProcessor(
                 const error =
                   err instanceof Error ? err : new Error(String(err));
                 fastify.log.error(
-                  { err: error },
-                  `Failed to save game state to DB for ${gameId}`,
+                  { err: error, gameId },
+                  'Failed to save checkpoint, closing connection',
                 );
+                const errorMsg: ServerMessage = {
+                  type: 'error',
+                  message: 'Failed to save game progress. Please reconnect.',
+                };
+                socket.send(JSON.stringify(errorMsg));
+                socket.close();
+                return;
               }
             }
 
@@ -443,6 +456,18 @@ export async function gameRoutes(fastify: FastifyInstance) {
     },
     async (request, reply) => {
       const { playerName, character } = request.body;
+
+      // Check DB health before creating game
+      if (!(await isDatabaseHealthy())) {
+        return reply
+          .status(503)
+          .send(
+            createErrorResponse(
+              'Database unavailable. Please try again later.',
+              ErrorCode.DATABASE_ERROR,
+            ),
+          );
+      }
 
       // Validate and sanitize player name (zod validates presence, we validate content)
       const nameResult = sanitizePlayerName(playerName);

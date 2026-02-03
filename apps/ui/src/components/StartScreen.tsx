@@ -78,11 +78,13 @@ export function StartScreen({
   onStart,
   onShowLeaderboard,
   error,
+  isLoading = false,
 }: {
   initialName?: string;
   onStart: (playerName: string, character: CharacterType) => void;
   onShowLeaderboard: () => void;
   error?: string | null;
+  isLoading?: boolean;
 }) {
   const [playerName, setPlayerName] = useState(initialName);
   const [selectedCharacter, setSelectedCharacter] =
@@ -139,10 +141,17 @@ export function StartScreen({
         />
         <Button
           type="submit"
-          disabled={!playerName.trim()}
+          disabled={!playerName.trim() || isLoading}
           className="min-w-max"
         >
-          Start Game
+          {isLoading ? (
+            <span className="flex items-center justify-center gap-2">
+              <span className="inline-block w-4 h-4 border-2 border-dark border-t-transparent rounded-full animate-spin" />
+              Starting...
+            </span>
+          ) : (
+            'Start Game'
+          )}
         </Button>
       </form>
 

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import cors from '@fastify/cors';
+import cors, { type FastifyCorsOptions } from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
@@ -65,12 +65,40 @@ fastify.setValidatorCompiler(validatorCompiler);
 fastify.setSerializerCompiler(serializerCompiler);
 
 await fastify.register(cors, {
-  origin: (origin, cb) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-      return cb(null, true);
-    }
-    return cb(new Error('Not allowed by CORS'), false);
+  delegator: (req, cb) => {
+    const corsOptions: FastifyCorsOptions = {
+      origin: (
+        origin: string | undefined,
+        callback: (err: Error | null, origin: string | boolean) => void,
+      ) => {
+        // Always allow health check endpoint (needed for Docker healthcheck)
+        if (req.url === '/health') {
+          return callback(null, true);
+        }
+
+        // Allow null origin in development OR when accessing via localhost
+        // (localhost Docker setups can have null origins for SSR/static pages)
+        const isLocalhost =
+          req.headers.host?.includes('localhost') ||
+          req.headers.host?.includes('127.0.0.1');
+        const allowNullOrigin =
+          process.env.NODE_ENV !== 'production' || isLocalhost;
+
+        if (
+          (allowNullOrigin && !origin) ||
+          (origin && ALLOWED_ORIGINS.includes(origin))
+        ) {
+          return callback(null, true);
+        }
+
+        fastify.log.warn(
+          { origin: origin || 'null', host: req.headers.host },
+          'CORS rejected origin',
+        );
+        return callback(new Error('Not allowed by CORS'), false);
+      },
+    };
+    cb(null, corsOptions);
   },
 });
 
@@ -96,11 +124,15 @@ await fastify.register(leaderboardRoutes, { prefix: '/leaderboard' });
 fastify.get('/health', async (_request, reply) => {
   try {
     // Add timeout to health check to prevent hanging
+    // Use 4s timeout (shorter than DB's 5s socketTimeoutMS to avoid race)
     const dbHealthyPromise = isDatabaseHealthy();
     const timeoutPromise = new Promise<boolean>((resolve) =>
-      setTimeout(() => resolve(false), 5000),
-    ); // 5s timeout
-    const dbHealthy = await Promise.race([dbHealthyPromise, timeoutPromise]);
+      setTimeout(() => resolve(false), 4000),
+    );
+    const dbHealthy = await Promise.race([
+      dbHealthyPromise.catch(() => false), // Convert rejections to false
+      timeoutPromise,
+    ]);
 
     if (!dbHealthy) {
       return reply.status(503).send({ status: 'error', db: 'disconnected' });

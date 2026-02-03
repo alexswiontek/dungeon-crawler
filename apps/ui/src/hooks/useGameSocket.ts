@@ -23,6 +23,8 @@ interface UseGameSocketResult {
   hasPlayer: boolean;
   // Expose status for game end detection
   status: string;
+  // Expose pending messages for loading state
+  hasPendingMessages: boolean;
 }
 
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -105,6 +107,7 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
   const reconnectAttempt = useGameStore((s) => s.reconnectAttempt);
   const error = useGameStore((s) => s.error);
   const damagedEntities = useGameStore((s) => s.damagedEntities);
+  const hasPendingMessages = useGameStore((s) => s.hasPendingMessages);
 
   // Store actions - get once and use refs to avoid dep issues
   const storeActionsRef = useRef({
@@ -114,6 +117,7 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
     setReconnectAttempt: useGameStore.getState().setReconnectAttempt,
     setError: useGameStore.getState().setError,
     setDamagedEntities: useGameStore.getState().setDamagedEntities,
+    setHasPendingMessages: useGameStore.getState().setHasPendingMessages,
     reset: useGameStore.getState().reset,
   });
 
@@ -136,6 +140,7 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
   const lastMoveTimeRef = useRef(0);
   const lastAttackTimeRef = useRef(0);
   const pendingMessagesRef = useRef(0);
+  const pendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Connection effect
   useEffect(() => {
@@ -201,17 +206,30 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
               break;
 
             case 'update': {
+              // Re-verify socket identity before mutating refs
+              if (wsRef.current !== ws) return;
+
               if (pendingMessagesRef.current > 0) {
                 pendingMessagesRef.current--;
               }
 
-              // Extract events
+              // Clear pending timeout and update UI
+              if (pendingTimeoutRef.current) {
+                clearTimeout(pendingTimeoutRef.current);
+                pendingTimeoutRef.current = null;
+              }
+              actions.setHasPendingMessages(false);
+
+              // Extract events using type guard
+              const isEventDelta = (
+                d: GameDelta,
+              ): d is { type: 'event'; event: GameEvent } => {
+                return d.type === 'event' && 'event' in d;
+              };
+
               const newEvents = message.deltas
-                .filter((d: GameDelta) => d.type === 'event')
-                .map(
-                  (d: GameDelta) =>
-                    (d as { type: 'event'; event: GameEvent }).event,
-                );
+                .filter(isEventDelta)
+                .map((d) => d.event);
 
               if (newEvents.length > 0) {
                 actions.addEvents(newEvents);
@@ -256,6 +274,14 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
 
             case 'error':
               actions.setError(message.message);
+
+              // If server tells us to reconnect, close the socket to trigger reconnection
+              if (
+                message.message.includes('reconnect') ||
+                message.message.includes('progress')
+              ) {
+                ws.close();
+              }
               break;
           }
         } catch {
@@ -269,7 +295,9 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
         actions.setConnected(false);
         wsRef.current = null;
 
-        if (manualCloseRef.current) return;
+        if (manualCloseRef.current) {
+          return;
+        }
 
         const nextAttempt = reconnectAttemptRef.current + 1;
         reconnectAttemptRef.current = nextAttempt;
@@ -365,6 +393,14 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
       pendingMessagesRef.current++;
       const message: ClientMessage = { type: 'move', direction };
       wsRef.current.send(JSON.stringify(message));
+
+      // Set pending state and timeout to show loading after 500ms
+      if (pendingTimeoutRef.current) {
+        clearTimeout(pendingTimeoutRef.current);
+      }
+      pendingTimeoutRef.current = setTimeout(() => {
+        storeActionsRef.current.setHasPendingMessages(true);
+      }, 500);
     }
   };
 
@@ -394,5 +430,6 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
     damagedEntities,
     hasPlayer,
     status,
+    hasPendingMessages,
   };
 }

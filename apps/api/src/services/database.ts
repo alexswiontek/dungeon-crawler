@@ -10,8 +10,9 @@ const mongoOptions: MongoClientOptions = {
   minPoolSize: 2,
   retryWrites: true,
   retryReads: true,
-  connectTimeoutMS: 10000,
-  serverSelectionTimeoutMS: 10000,
+  connectTimeoutMS: 5000, // Reduced from 10s to 5s for faster failure
+  serverSelectionTimeoutMS: 5000, // Reduced from 10s to 5s
+  socketTimeoutMS: 5000, // Add socket timeout to prevent hanging operations
 };
 
 let client: MongoClient | null = null;

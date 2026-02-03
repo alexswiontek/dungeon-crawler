@@ -81,19 +81,20 @@ export async function unregisterSession(
         await games.replaceOne({ _id: gameId }, cachedState);
 
         // Re-check session still matches AFTER async DB operation
-        // Prevents race condition where client reconnects during DB write
+        // This check must happen BEFORE cache deletion to prevent race condition
+        // where a new session registers while DB write is in progress
         const currentSession = activeSessions.get(gameId);
-        if (currentSession === session) {
-          // Same session object - safe to delete cache
-          gameStateCache.delete(gameId);
-        } else {
-          // Session was replaced during DB write - don't delete cache
+        if (currentSession !== session) {
+          // Session was replaced during DB write - don't delete cache or session
           logger.info(
             { gameId },
             'Session replaced during unregister, keeping new session',
           );
           return;
         }
+
+        // Safe to delete cache - session identity verified
+        gameStateCache.delete(gameId);
       } catch (err: unknown) {
         const error = err instanceof Error ? err : new Error(String(err));
         logger.error(
@@ -140,20 +141,36 @@ export function updateCachedGameState(gameId: string, state: GameState): void {
 /**
  * Save cached game state to database (checkpoint)
  * Called on level descend, death, win, or disconnect
+ * @throws {Error} If database write fails or times out
  */
-export async function saveGameStateToDb(gameId: string): Promise<void> {
+export async function saveGameStateToDb(
+  gameId: string,
+  timeoutMs = 3000,
+): Promise<void> {
   const cachedState = gameStateCache.get(gameId);
   if (!cachedState) {
     return;
   }
 
   try {
-    const games = getDb().collection<GameDoc>('games');
-    const result = await games.replaceOne({ _id: gameId }, cachedState);
+    // Add timeout protection to prevent indefinite hangs
+    const savePromise = (async () => {
+      const games = getDb().collection<GameDoc>('games');
+      const result = await games.replaceOne({ _id: gameId }, cachedState);
 
-    if (result.matchedCount === 0) {
-      throw new Error(`Game ${gameId} not found in database`);
-    }
+      if (result.matchedCount === 0) {
+        throw new Error(`Game ${gameId} not found in database`);
+      }
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`DB write timeout after ${timeoutMs}ms`)),
+        timeoutMs,
+      ),
+    );
+
+    await Promise.race([savePromise, timeoutPromise]);
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
     logger.error({ err: error, gameId }, 'Failed to save game state to DB');

@@ -18,6 +18,12 @@ export function ConnectionOverlay({
           : 'Connecting...'}
       </p>
       {error && <p className="text-accent text-sm mt-2">{error}</p>}
+      {reconnecting && reconnectAttempt > 3 && (
+        <p className="text-gray-400 text-xs mt-2 max-w-xs text-center">
+          Connection issues may be due to server maintenance. Your progress is
+          saved.
+        </p>
+      )}
     </div>
   );
 }

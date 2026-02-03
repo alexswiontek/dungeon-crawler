@@ -33,6 +33,7 @@ function App() {
   const [finalState, setFinalState] = useState<GameState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isRestoring, setIsRestoring] = useState(true);
+  const [isStartingGame, setIsStartingGame] = useState(false);
 
   // Check for saved game on mount
   useEffect(() => {
@@ -97,6 +98,7 @@ function App() {
     name: string,
     selectedCharacter: CharacterType,
   ) => {
+    setIsStartingGame(true);
     try {
       setError(null);
       setPlayerName(name);
@@ -116,6 +118,8 @@ function App() {
       setScreen('game');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start game');
+    } finally {
+      setIsStartingGame(false);
     }
   };
 
@@ -184,6 +188,7 @@ function App() {
           onStart={handleStartGame}
           onShowLeaderboard={handleShowLeaderboard}
           error={error}
+          isLoading={isStartingGame}
         />
       )}
 
