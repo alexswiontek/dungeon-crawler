@@ -1,9 +1,8 @@
 import { type Db, MongoClient, type MongoClientOptions } from 'mongodb';
+import { GAME_TTL_SECONDS } from '@/utils/constants.js';
+import { logger } from '@/utils/logger.js';
 
 const MONGODB_URI = process.env.MONGODB_URI;
-
-// TTL for inactive games: 7 days in seconds
-const GAME_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 // Connection pool configuration
 const mongoOptions: MongoClientOptions = {
@@ -25,20 +24,39 @@ export async function connectToDatabase(): Promise<Db> {
     throw new Error('Please define the MONGODB_URI environment variable');
   }
 
-  client = new MongoClient(MONGODB_URI, mongoOptions);
-  await client.connect();
-  db = client.db();
+  const newClient = new MongoClient(MONGODB_URI, mongoOptions);
+  try {
+    await newClient.connect();
+    db = newClient.db();
+    client = newClient;
 
-  // Create TTL index to auto-delete inactive games after 7 days
-  await db
-    .collection('games')
-    .createIndex(
-      { updatedAt: 1 },
-      { expireAfterSeconds: GAME_TTL_SECONDS, background: true },
+    // Create TTL index to auto-delete inactive games after 7 days
+    await db
+      .collection('games')
+      .createIndex(
+        { updatedAt: 1 },
+        { expireAfterSeconds: GAME_TTL_SECONDS, background: true },
+      );
+
+    // Create indexes for leaderboard queries
+    logger.info('Creating database indexes...');
+    await db
+      .collection('leaderboard')
+      .createIndex({ score: -1 }, { background: true }); // For top scores query
+
+    await db
+      .collection('leaderboard')
+      .createIndex({ createdAt: -1 }, { background: true }); // For recent scores query
+
+    logger.info(
+      { database: db.databaseName },
+      'Connected to MongoDB successfully',
     );
-
-  console.log('Connected to MongoDB');
-  return db;
+    return db;
+  } catch (error) {
+    await newClient.close(); // Clean up failed connection
+    throw error;
+  }
 }
 
 export function getDb(): Db {
@@ -53,7 +71,7 @@ export async function closeDatabase(): Promise<void> {
     await client.close();
     client = null;
     db = null;
-    console.log('Disconnected from MongoDB');
+    logger.info('Disconnected from MongoDB');
   }
 }
 

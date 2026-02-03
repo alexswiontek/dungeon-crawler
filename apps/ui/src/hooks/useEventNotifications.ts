@@ -22,7 +22,7 @@ interface EventType {
 const EVENT_CONFIG: Record<string, EventType> = {
   level_up: { variant: 'success', isToast: true },
   equipment_equipped: { variant: 'success', isToast: false },
-  equipment_found: { variant: 'neutral', isToast: false },
+  equipment_ignored: { variant: 'neutral', isToast: false },
   player_healed: { variant: 'success', isToast: false },
   potion_refused: { variant: 'neutral', isToast: false },
   item_picked_up: { variant: 'neutral', isToast: false },
@@ -91,14 +91,17 @@ export function useEventNotifications(events: GameEvent[], hasPlayer: boolean) {
         }, 3000);
       }
     });
+  }, [events, hasPlayer]);
 
-    // Cleanup timer on unmount
+  // Separate effect for cleanup on unmount only
+  useEffect(() => {
     return () => {
       if (tooltipTimerRef.current) {
         clearTimeout(tooltipTimerRef.current);
+        tooltipTimerRef.current = null;
       }
     };
-  }, [events, hasPlayer]);
+  }, []);
 
   const removeToast = (id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));

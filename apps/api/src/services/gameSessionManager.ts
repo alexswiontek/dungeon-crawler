@@ -1,15 +1,8 @@
 import type { GameState } from '@dungeon-crawler/shared';
 import { getDb, isDatabaseHealthy } from '@/services/database.js';
-
-// WebSocket interface - use a minimal type that matches what we need
-interface GameWebSocket {
-  readyState: number;
-  send(data: string): void;
-}
-
-interface GameDoc extends Omit<GameState, '_id'> {
-  _id: string;
-}
+import type { GameDoc, GameWebSocket } from '@/types/database.js';
+import { SESSION_TIMEOUT } from '@/utils/constants.js';
+import { logger } from '@/utils/logger.js';
 
 interface GameSession {
   gameId: string;
@@ -27,8 +20,9 @@ const activeSessions = new Map<string, GameSession>();
 // Only written to DB on checkpoints (level descend, death, disconnect)
 const gameStateCache = new Map<string, GameState>();
 
-// Cleanup inactive sessions after 5 minutes
-const SESSION_TIMEOUT = 5 * 60 * 1000;
+// Cleanup inactive sessions timeout (imported from constants)
+// Paused sessions get a longer timeout (30 minutes vs 5 minutes)
+const PAUSED_SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
 /**
  * Register a new game session for real-time updates
@@ -41,11 +35,9 @@ export function registerSession(
 ): void {
   // Clean up existing session if any (don't save to DB, just clear memory)
   if (activeSessions.has(gameId)) {
+    logger.info({ gameId }, 'Replacing existing session');
     activeSessions.delete(gameId);
   }
-
-  // Cache the game state in memory
-  gameStateCache.set(gameId, initialState);
 
   const session: GameSession = {
     gameId,
@@ -55,7 +47,14 @@ export function registerSession(
     gameState: initialState,
   };
 
+  // Set session first, then cache (ensures atomicity)
   activeSessions.set(gameId, session);
+  gameStateCache.set(gameId, initialState);
+
+  logger.info(
+    { gameId, totalActive: activeSessions.size },
+    'Session registered',
+  );
 }
 
 /**
@@ -80,16 +79,41 @@ export async function unregisterSession(
       try {
         const games = getDb().collection<GameDoc>('games');
         await games.replaceOne({ _id: gameId }, cachedState);
-      } catch (err) {
-        console.error(
-          `Failed to save game state on disconnect: ${gameId}`,
-          err,
+
+        // Re-check session still matches AFTER async DB operation
+        // Prevents race condition where client reconnects during DB write
+        const currentSession = activeSessions.get(gameId);
+        if (currentSession === session) {
+          // Same session object - safe to delete cache
+          gameStateCache.delete(gameId);
+        } else {
+          // Session was replaced during DB write - don't delete cache
+          logger.info(
+            { gameId },
+            'Session replaced during unregister, keeping new session',
+          );
+          return;
+        }
+      } catch (err: unknown) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        logger.error(
+          { err: error, gameId },
+          'Failed to save game state on disconnect',
         );
+        // Keep cache and session - player can reconnect and we'll have the cached state
+        return;
       }
-      gameStateCache.delete(gameId);
     }
 
-    activeSessions.delete(gameId);
+    // Re-check session still matches before deleting
+    const currentSession = activeSessions.get(gameId);
+    if (currentSession === session) {
+      activeSessions.delete(gameId);
+      logger.info(
+        { gameId, totalActive: activeSessions.size },
+        'Session unregistered',
+      );
+    }
   }
 }
 
@@ -125,10 +149,15 @@ export async function saveGameStateToDb(gameId: string): Promise<void> {
 
   try {
     const games = getDb().collection<GameDoc>('games');
-    await games.replaceOne({ _id: gameId }, cachedState);
-  } catch (err) {
-    console.error(`Failed to save game state to DB: ${gameId}`, err);
-    throw err;
+    const result = await games.replaceOne({ _id: gameId }, cachedState);
+
+    if (result.matchedCount === 0) {
+      throw new Error(`Game ${gameId} not found in database`);
+    }
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    logger.error({ err: error, gameId }, 'Failed to save game state to DB');
+    throw error;
   }
 }
 
@@ -163,51 +192,62 @@ export function resumeSession(gameId: string): void {
   }
 }
 
-// Cleanup stale sessions periodically (every minute)
-const cleanupInterval = setInterval(async () => {
-  const now = Date.now();
-  const staleGameIds: string[] = [];
+// Cleanup interval - starts on demand to prevent multiple intervals in tests
+let cleanupInterval: NodeJS.Timeout | null = null;
 
-  for (const [gameId, session] of activeSessions) {
-    if (now - session.lastActivity > SESSION_TIMEOUT) {
-      staleGameIds.push(gameId);
-    }
-  }
+/**
+ * Start the cleanup interval for stale sessions
+ * Safe to call multiple times - only starts once
+ */
+export function startCleanupInterval(): void {
+  if (cleanupInterval) return; // Already started
 
-  // Clean up stale sessions (async cleanup handled properly)
-  for (const gameId of staleGameIds) {
-    const session = activeSessions.get(gameId);
-    // Don't timeout paused sessions
-    if (session?.isPaused) continue;
+  cleanupInterval = setInterval(async () => {
+    const now = Date.now();
+    const staleGameIds: string[] = [];
 
-    console.log(`Cleaning up stale session: ${gameId}`);
-
-    // Check DB health before attempting cleanup
-    const dbHealthy = await isDatabaseHealthy();
-    if (!dbHealthy) {
-      console.warn(`Skipping DB cleanup for ${gameId}: Database unhealthy`);
-      // Still remove from memory to prevent leak
-      activeSessions.delete(gameId);
-      gameStateCache.delete(gameId);
-      continue;
+    for (const [gameId, session] of activeSessions) {
+      const timeout = session.isPaused
+        ? PAUSED_SESSION_TIMEOUT
+        : SESSION_TIMEOUT;
+      if (now - session.lastActivity > timeout) {
+        staleGameIds.push(gameId);
+      }
     }
 
-    unregisterSession(gameId).catch((err) => {
-      console.error(`Failed to cleanup stale session ${gameId}:`, err);
-      // Remove from memory even if DB write fails
-      activeSessions.delete(gameId);
-      gameStateCache.delete(gameId);
+    // Clean up stale sessions (await all cleanup operations)
+    const cleanupPromises = staleGameIds.map(async (gameId) => {
+      logger.info({ gameId }, 'Cleaning up stale session');
+
+      // Check DB health before attempting cleanup
+      const dbHealthy = await isDatabaseHealthy();
+      if (!dbHealthy) {
+        logger.warn({ gameId }, 'Skipping cleanup: Database unhealthy');
+        // Session remains in memory and will be rechecked next cycle if still stale
+        // This prevents data loss during DB outages
+        return;
+      }
+
+      try {
+        await unregisterSession(gameId);
+      } catch (err: unknown) {
+        logger.error({ err, gameId }, 'Failed to cleanup stale session');
+        // Don't delete from memory - unregisterSession already handles race conditions
+        // and session identity checking. Deleting here would bypass that protection.
+      }
     });
-  }
-}, 60000);
+
+    await Promise.all(cleanupPromises);
+  }, 60000);
+}
 
 // Graceful shutdown - clear interval and cleanup sessions
-const gracefulShutdown = async () => {
-  clearInterval(cleanupInterval);
+// Exported so it can be called from index.ts
+export async function cleanupAllSessions(): Promise<void> {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
+  }
   const sessionIds = Array.from(activeSessions.keys());
   await Promise.allSettled(sessionIds.map((id) => unregisterSession(id)));
-  process.exit(0);
-};
-
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
+}

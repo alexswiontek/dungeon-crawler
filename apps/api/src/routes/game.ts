@@ -2,12 +2,8 @@ import { randomUUID } from 'node:crypto';
 import {
   type CharacterType,
   type ClientMessage,
-  type EnemyType,
-  type EnemyVariant,
-  type GameState,
   type GameStatus,
   isDirection,
-  isPlayerDiedEvent,
   type MoveRequest,
   type NewGameRequest,
   type ServerMessage,
@@ -19,57 +15,6 @@ import {
   RegExpMatcher,
 } from 'obscenity';
 import { z } from 'zod';
-
-// Profanity filter for player names
-const profanityMatcher = new RegExpMatcher({
-  ...englishDataset.build(),
-  ...englishRecommendedTransformers,
-});
-
-// WebSocket message validation schema
-const ClientMessageSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('move'),
-    direction: z.enum(['up', 'down', 'left', 'right']),
-  }),
-  z.object({ type: z.literal('attack') }),
-  z.object({ type: z.literal('pause') }),
-  z.object({ type: z.literal('resume') }),
-]);
-
-const MAX_MESSAGE_SIZE = 1024; // 1KB max
-const MAX_PARSE_ERRORS = 5;
-
-/**
- * Sanitize player name - clean profanity and validate
- */
-function sanitizePlayerName(name: string): {
-  valid: boolean;
-  name: string;
-  error?: string;
-} {
-  const trimmed = name.trim();
-
-  if (trimmed.length === 0) {
-    return { valid: false, name: '', error: 'Name is required' };
-  }
-
-  if (trimmed.length > 20) {
-    return {
-      valid: false,
-      name: '',
-      error: 'Name must be 20 characters or less',
-    };
-  }
-
-  // Check if name contains profanity
-  if (profanityMatcher.hasMatch(trimmed)) {
-    return { valid: false, name: '', error: 'Please choose a different name' };
-  }
-
-  return { valid: true, name: trimmed };
-}
-
 import { getDb, isDatabaseHealthy } from '@/services/database.js';
 import {
   createNewGame,
@@ -89,9 +34,388 @@ import {
   updateCachedGameState,
   updateSessionActivity,
 } from '@/services/gameSessionManager.js';
+import {
+  safeSubmitDeathScore,
+  safeSubmitVictoryScore,
+} from '@/services/leaderboardService.js';
+import { createErrorResponse, ErrorCode } from '@/types/apiErrors.js';
+import type { GameDoc } from '@/types/database.js';
+import {
+  MAX_MESSAGE_SIZE,
+  MAX_PARSE_ERRORS,
+  MAX_PLAYER_NAME_LENGTH,
+  PERF_THRESHOLD_ATTACK_MS,
+  PERF_THRESHOLD_MESSAGE_MS,
+  PERF_THRESHOLD_MOVE_MS,
+  WS_MESSAGE_QUEUE_OVERFLOW_SIZE,
+  WS_MESSAGE_QUEUE_SIZE,
+} from '@/utils/constants.js';
 
-interface GameDoc extends Omit<GameState, '_id'> {
-  _id: string;
+// Profanity filter for player names
+const profanityMatcher = new RegExpMatcher({
+  ...englishDataset.build(),
+  ...englishRecommendedTransformers,
+});
+
+// WebSocket message validation schema
+const ClientMessageSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('move'),
+    direction: z.enum(['up', 'down', 'left', 'right']),
+  }),
+  z.object({ type: z.literal('attack') }),
+  z.object({ type: z.literal('pause') }),
+  z.object({ type: z.literal('resume') }),
+]);
+
+/**
+ * Create a message processor for a WebSocket connection
+ * Encapsulates message queue and processing state per connection
+ */
+function createMessageProcessor(
+  gameId: string,
+  socket: WebSocket,
+  fastify: FastifyInstance,
+) {
+  let processingMessage = false;
+  const messageQueue: (Buffer | string)[] = [];
+  let parseErrorCount = 0;
+
+  async function processNextMessage() {
+    if (processingMessage) return;
+    processingMessage = true;
+
+    try {
+      while (messageQueue.length > 0) {
+        // Defensive: if queue grew beyond safe bounds, close connection
+        if (messageQueue.length > WS_MESSAGE_QUEUE_OVERFLOW_SIZE) {
+          fastify.log.warn(
+            { gameId, queueSize: messageQueue.length },
+            'Message queue overflow, closing connection',
+          );
+          const errorMsg: ServerMessage = {
+            type: 'error',
+            message: 'Too many pending actions. Please reconnect.',
+          };
+          socket.send(JSON.stringify(errorMsg));
+          socket.close();
+          return;
+        }
+
+        const rawMessage = messageQueue.shift();
+        if (!rawMessage) break;
+
+        const messageStart = performance.now();
+
+        try {
+          // Check message size first
+          const rawMessageStr = rawMessage.toString();
+          if (rawMessageStr.length > MAX_MESSAGE_SIZE) {
+            fastify.log.warn(
+              { gameId, messageSize: rawMessageStr.length },
+              'Message too large',
+            );
+            const errorMsg: ServerMessage = {
+              type: 'error',
+              message: 'Message too large',
+            };
+            socket.send(JSON.stringify(errorMsg));
+            socket.close();
+            return;
+          }
+
+          // Parse and validate message
+          let message: ClientMessage;
+          try {
+            const parsed = JSON.parse(rawMessageStr);
+            message = ClientMessageSchema.parse(parsed);
+          } catch (err: unknown) {
+            const error = err instanceof Error ? err : new Error(String(err));
+            parseErrorCount++;
+            fastify.log.error(
+              {
+                err: error,
+                gameId,
+                parseErrorCount,
+                maxErrors: MAX_PARSE_ERRORS,
+              },
+              'Invalid message format',
+            );
+
+            const errorMsg: ServerMessage = {
+              type: 'error',
+              message: 'Invalid message format',
+            };
+            socket.send(JSON.stringify(errorMsg));
+
+            // Rate limit parse errors
+            if (parseErrorCount >= MAX_PARSE_ERRORS) {
+              fastify.log.warn(
+                { gameId, parseErrorCount },
+                'Too many parse errors, closing connection',
+              );
+              socket.close();
+            }
+            continue; // Skip to next message
+          }
+
+          // Use info level to ensure it shows in logs
+          fastify.log.info(
+            `[WS] Processing message type: ${message.type} for game ${gameId}`,
+          );
+
+          // Handle pause/resume for real-time movement
+          if (message.type === 'pause') {
+            pauseSession(gameId);
+            continue;
+          }
+          if (message.type === 'resume') {
+            resumeSession(gameId);
+            continue;
+          }
+
+          // Update session activity on player actions
+          updateSessionActivity(gameId);
+
+          // Get game state from in-memory cache (no DB read)
+          const game = getCachedGameState(gameId);
+
+          if (!game || game.status !== 'active') {
+            const errorMsg: ServerMessage = {
+              type: 'error',
+              message: 'Game is no longer active',
+            };
+            socket.send(JSON.stringify(errorMsg));
+            continue;
+          }
+
+          if (message.type === 'move') {
+            const { direction } = message;
+            if (!isDirection(direction)) {
+              const errorMsg: ServerMessage = {
+                type: 'error',
+                message: 'Invalid direction',
+              };
+              socket.send(JSON.stringify(errorMsg));
+              continue;
+            }
+
+            // Process move and get deltas - with performance monitoring
+            fastify.log.info(
+              `[WS] Calling processMoveWithDeltas for ${direction}`,
+            );
+            const moveStart = performance.now();
+            const { events, deltas } = processMoveWithDeltas(game, direction);
+            const moveTime = performance.now() - moveStart;
+
+            fastify.log.info(
+              `[PERF] processMoveWithDeltas completed in ${moveTime.toFixed(1)}ms`,
+            );
+            if (moveTime > PERF_THRESHOLD_MOVE_MS) {
+              fastify.log.warn(
+                `[PERF] SLOW: processMoveWithDeltas took ${moveTime.toFixed(1)}ms for game ${gameId}`,
+              );
+            }
+
+            // Update in-memory cache (no DB write yet)
+            updateCachedGameState(gameId, game);
+
+            const currentStatus = readStatus(game);
+
+            // Save to DB only on checkpoints (level descend, death, win)
+            const isCheckpoint =
+              currentStatus === 'dead' ||
+              currentStatus === 'won' ||
+              deltas.some((d) => d.type === 'new_floor');
+
+            if (isCheckpoint) {
+              try {
+                await saveGameStateToDb(gameId);
+              } catch (err: unknown) {
+                const error =
+                  err instanceof Error ? err : new Error(String(err));
+                fastify.log.error(
+                  { err: error },
+                  `Failed to save game state to DB for ${gameId}`,
+                );
+                // Continue anyway - state is in cache
+              }
+            }
+
+            // Submit to leaderboard on death/win
+            if (currentStatus === 'dead') {
+              await safeSubmitDeathScore(
+                game.playerName,
+                game.score,
+                game.floor,
+                events,
+                fastify.log,
+                gameId,
+              );
+            } else if (currentStatus === 'won') {
+              await safeSubmitVictoryScore(
+                game.playerName,
+                game.score,
+                game.floor,
+                fastify.log,
+                gameId,
+              );
+            }
+
+            // Send deltas to client
+            const updateMsg: ServerMessage = {
+              type: 'update',
+              deltas,
+            };
+            socket.send(JSON.stringify(updateMsg));
+          } else if (message.type === 'attack') {
+            // Process attack and get deltas
+            const attackStart = performance.now();
+            const { events, deltas } = processAttackWithDeltas(game);
+            const attackTime = performance.now() - attackStart;
+
+            if (attackTime > PERF_THRESHOLD_ATTACK_MS) {
+              fastify.log.warn(
+                `[PERF] SLOW: processAttackWithDeltas took ${attackTime.toFixed(1)}ms for game ${gameId}`,
+              );
+            }
+
+            // Update in-memory cache
+            updateCachedGameState(gameId, game);
+
+            const currentStatus = readStatus(game);
+
+            // Save to DB only on checkpoints
+            const isCheckpoint =
+              currentStatus === 'dead' || currentStatus === 'won';
+
+            if (isCheckpoint) {
+              try {
+                await saveGameStateToDb(gameId);
+              } catch (err: unknown) {
+                const error =
+                  err instanceof Error ? err : new Error(String(err));
+                fastify.log.error(
+                  { err: error },
+                  `Failed to save game state to DB for ${gameId}`,
+                );
+              }
+            }
+
+            // Submit to leaderboard on death/win
+            if (currentStatus === 'dead') {
+              await safeSubmitDeathScore(
+                game.playerName,
+                game.score,
+                game.floor,
+                events,
+                fastify.log,
+                gameId,
+              );
+            } else if (currentStatus === 'won') {
+              await safeSubmitVictoryScore(
+                game.playerName,
+                game.score,
+                game.floor,
+                fastify.log,
+                gameId,
+              );
+            }
+
+            // Send deltas to client
+            const updateMsg: ServerMessage = {
+              type: 'update',
+              deltas,
+            };
+            socket.send(JSON.stringify(updateMsg));
+          }
+        } catch (err: unknown) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          fastify.log.error(
+            { err: error },
+            `WebSocket message error for game ${gameId}`,
+          );
+          try {
+            const errorMsg: ServerMessage = {
+              type: 'error',
+              message: 'Invalid message format',
+            };
+            socket.send(JSON.stringify(errorMsg));
+          } catch (sendErr: unknown) {
+            const sendError =
+              sendErr instanceof Error ? sendErr : new Error(String(sendErr));
+            // Socket closed or broken - close connection and stop processing
+            fastify.log.debug(
+              { err: sendError, gameId },
+              'Failed to send error response, closing connection',
+            );
+            socket.close();
+            return; // Stop processing queue
+          }
+        } finally {
+          const totalTime = performance.now() - messageStart;
+          if (totalTime > PERF_THRESHOLD_MESSAGE_MS) {
+            fastify.log.warn(
+              `[PERF] Total message processing took ${totalTime.toFixed(1)}ms for game ${gameId}`,
+            );
+          }
+        }
+      }
+    } finally {
+      processingMessage = false;
+    }
+  }
+
+  function enqueueMessage(rawMessage: Buffer | string) {
+    // Drop messages if queue is full to prevent server overload
+    if (messageQueue.length >= WS_MESSAGE_QUEUE_SIZE) {
+      try {
+        const errorMsg: ServerMessage = {
+          type: 'error',
+          message: 'Command buffer full. Please wait.',
+        };
+        socket.send(JSON.stringify(errorMsg));
+      } catch {
+        // Socket error, safe to ignore
+      }
+      return;
+    }
+    messageQueue.push(rawMessage);
+    // Use setImmediate to process messages asynchronously
+    setImmediate(() => processNextMessage());
+  }
+
+  return { enqueueMessage };
+}
+
+/**
+ * Sanitize player name - clean profanity and validate
+ */
+function sanitizePlayerName(name: string): {
+  valid: boolean;
+  name: string;
+  error?: string;
+} {
+  const trimmed = name.trim();
+
+  if (trimmed.length === 0) {
+    return { valid: false, name: '', error: 'Name is required' };
+  }
+
+  if (trimmed.length > MAX_PLAYER_NAME_LENGTH) {
+    return {
+      valid: false,
+      name: '',
+      error: `Name must be ${MAX_PLAYER_NAME_LENGTH} characters or less`,
+    };
+  }
+
+  // Check if name contains profanity
+  if (profanityMatcher.hasMatch(trimmed)) {
+    return { valid: false, name: '', error: 'Please choose a different name' };
+  }
+
+  return { valid: true, name: trimmed };
 }
 
 // Helper to read game status without TypeScript's stale control flow narrowing
@@ -100,56 +424,56 @@ function readStatus(game: { status: GameStatus }): GameStatus {
   return game.status;
 }
 
-interface LeaderboardDoc {
-  _id: string;
-  playerName: string;
-  score: number;
-  floor: number;
-  killedBy: string | null;
-  killedByType: EnemyType | null;
-  killedByVariant: EnemyVariant | null;
-  createdAt: Date;
-}
-
 export async function gameRoutes(fastify: FastifyInstance) {
   const games = () => getDb().collection<GameDoc>('games');
-  const leaderboard = () => getDb().collection<LeaderboardDoc>('leaderboard');
 
   // Create new game
-  fastify.post<{ Body: NewGameRequest }>('/new', async (request, reply) => {
-    const { playerName, character } = request.body;
+  fastify.post<{ Body: NewGameRequest }>(
+    '/new',
+    {
+      schema: {
+        body: z.object({
+          playerName: z.string().min(1, 'Name is required'),
+          character: z.enum(['dwarf', 'elf', 'bandit', 'wizard'], {
+            message:
+              'Invalid character. Must be one of: dwarf, elf, bandit, wizard',
+          }),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { playerName, character } = request.body;
 
-    // Validate and sanitize player name
-    const nameResult = sanitizePlayerName(playerName || '');
-    if (!nameResult.valid) {
-      return reply.status(400).send({ error: nameResult.error });
-    }
+      // Validate and sanitize player name (zod validates presence, we validate content)
+      const nameResult = sanitizePlayerName(playerName);
+      if (!nameResult.valid) {
+        return reply
+          .status(400)
+          .send(
+            createErrorResponse(
+              nameResult.error || 'Invalid player name',
+              ErrorCode.INVALID_PLAYER_NAME,
+            ),
+          );
+      }
 
-    // Validate character type
-    const validCharacters: CharacterType[] = [
-      'dwarf',
-      'elf',
-      'bandit',
-      'wizard',
-    ];
-    const selectedCharacter: CharacterType = validCharacters.includes(character)
-      ? character
-      : 'dwarf';
+      const selectedCharacter: CharacterType = character;
 
-    const playerId = randomUUID();
-    const gameState = createNewGame(
-      nameResult.name,
-      playerId,
-      selectedCharacter,
-    );
+      const playerId = randomUUID();
+      const gameState = createNewGame(
+        nameResult.name,
+        playerId,
+        selectedCharacter,
+      );
 
-    await games().insertOne(gameState);
+      await games().insertOne(gameState);
 
-    return {
-      gameId: gameState._id,
-      state: gameState,
-    };
-  });
+      return {
+        gameId: gameState._id,
+        state: gameState,
+      };
+    },
+  );
 
   // Get game state
   fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
@@ -157,7 +481,9 @@ export async function gameRoutes(fastify: FastifyInstance) {
 
     const game = await games().findOne({ _id: id });
     if (!game) {
-      return reply.status(404).send({ error: 'Game not found' });
+      return reply
+        .status(404)
+        .send(createErrorResponse('Game not found', ErrorCode.GAME_NOT_FOUND));
     }
 
     return { state: game };
@@ -166,21 +492,38 @@ export async function gameRoutes(fastify: FastifyInstance) {
   // Move player
   fastify.post<{ Params: { id: string }; Body: MoveRequest }>(
     '/:id/move',
+    {
+      schema: {
+        body: z.object({
+          direction: z.enum(['up', 'down', 'left', 'right'], {
+            message: 'Invalid direction. Must be one of: up, down, left, right',
+          }),
+        }),
+      },
+    },
     async (request, reply) => {
       const { id } = request.params;
       const { direction } = request.body;
 
-      if (!['up', 'down', 'left', 'right'].includes(direction)) {
-        return reply.status(400).send({ error: 'Invalid direction' });
-      }
-
+      // Check game existence first
       const game = await games().findOne({ _id: id });
       if (!game) {
-        return reply.status(404).send({ error: 'Game not found' });
+        return reply
+          .status(404)
+          .send(
+            createErrorResponse('Game not found', ErrorCode.GAME_NOT_FOUND),
+          );
       }
 
       if (game.status !== 'active') {
-        return reply.status(400).send({ error: 'Game is not active' });
+        return reply
+          .status(400)
+          .send(
+            createErrorResponse(
+              'Game is not active',
+              ErrorCode.GAME_NOT_ACTIVE,
+            ),
+          );
       }
 
       const events = processMove(game, direction);
@@ -190,24 +533,15 @@ export async function gameRoutes(fastify: FastifyInstance) {
 
       // If player died, submit to leaderboard
       if (currentStatus === 'dead') {
-        const killedByEvent = events.find(isPlayerDiedEvent);
-        if (!killedByEvent) {
-          fastify.log.error(
-            `CRITICAL: Player died but no player_died event found for game ${id}`,
-          );
-          throw new Error('Player died without death event - data corruption');
-        }
-        const { killedBy, killedByType, killedByVariant } = killedByEvent.data;
-        await leaderboard().insertOne({
-          _id: randomUUID(),
-          playerName: game.playerName,
-          score: game.score,
-          floor: game.floor,
-          killedBy,
-          killedByType,
-          killedByVariant,
-          createdAt: new Date(),
-        });
+        // Use the safe submit function to handle error logging and prevent crashes
+        await safeSubmitDeathScore(
+          game.playerName,
+          game.score,
+          game.floor,
+          events,
+          fastify.log,
+          id,
+        );
       }
 
       return { state: game, events };
@@ -222,17 +556,35 @@ export async function gameRoutes(fastify: FastifyInstance) {
 
       const game = await games().findOne({ _id: id });
       if (!game) {
-        return reply.status(404).send({ error: 'Game not found' });
+        return reply
+          .status(404)
+          .send(
+            createErrorResponse('Game not found', ErrorCode.GAME_NOT_FOUND),
+          );
       }
 
       if (game.status !== 'active') {
-        return reply.status(400).send({ error: 'Game is not active' });
+        return reply
+          .status(400)
+          .send(
+            createErrorResponse(
+              'Game is not active',
+              ErrorCode.GAME_NOT_ACTIVE,
+            ),
+          );
       }
 
       const events = descendStairs(game);
 
       if (events.length === 0) {
-        return reply.status(400).send({ error: 'Not standing on stairs' });
+        return reply
+          .status(400)
+          .send(
+            createErrorResponse(
+              'Not standing on stairs',
+              ErrorCode.NOT_ON_STAIRS,
+            ),
+          );
       }
 
       const currentStatus = readStatus(game);
@@ -240,16 +592,14 @@ export async function gameRoutes(fastify: FastifyInstance) {
 
       // If player won, submit to leaderboard
       if (currentStatus === 'won') {
-        await leaderboard().insertOne({
-          _id: randomUUID(),
-          playerName: game.playerName,
-          score: game.score,
-          floor: game.floor,
-          killedBy: null,
-          killedByType: null,
-          killedByVariant: null,
-          createdAt: new Date(),
-        });
+        // Use the safe submit function to handle error logging and prevent crashes
+        await safeSubmitVictoryScore(
+          game.playerName,
+          game.score,
+          game.floor,
+          fastify.log,
+          id,
+        );
       }
 
       return { state: game, events };
@@ -262,7 +612,9 @@ export async function gameRoutes(fastify: FastifyInstance) {
 
     const result = await games().deleteOne({ _id: id });
     if (result.deletedCount === 0) {
-      return reply.status(404).send({ error: 'Game not found' });
+      return reply
+        .status(404)
+        .send(createErrorResponse('Game not found', ErrorCode.GAME_NOT_FOUND));
     }
 
     return { success: true };
@@ -277,8 +629,9 @@ export async function gameRoutes(fastify: FastifyInstance) {
 
       // Check DB health before processing WebSocket connection
       if (!(await isDatabaseHealthy())) {
-        console.error(
-          `Database unhealthy, rejecting WebSocket connection for ${id}`,
+        fastify.log.error(
+          { gameId: id },
+          'Database unhealthy, rejecting WebSocket connection',
         );
         const errorMsg: ServerMessage = {
           type: 'error',
@@ -290,7 +643,7 @@ export async function gameRoutes(fastify: FastifyInstance) {
       }
 
       // Load game state
-      let game = await games().findOne({ _id: id });
+      const game = await games().findOne({ _id: id });
       if (!game) {
         const errorMsg: ServerMessage = {
           type: 'error',
@@ -312,321 +665,32 @@ export async function gameRoutes(fastify: FastifyInstance) {
       }
 
       // Send initial visible state (anti-cheat: only visible data)
-      const initMsg: ServerMessage = {
-        type: 'init',
-        state: getVisibleState(game),
-      };
-      socket.send(JSON.stringify(initMsg));
+      try {
+        const initMsg: ServerMessage = {
+          type: 'init',
+          state: getVisibleState(game),
+        };
+        socket.send(JSON.stringify(initMsg));
+      } catch (err: unknown) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        fastify.log.error(
+          { err: error },
+          `Failed to send initial state for game ${id}`,
+        );
+        socket.close();
+        return;
+      }
 
       // Register session for real-time enemy movement
       // Load game state into memory cache
       registerSession(id, socket, game);
 
-      // Message processing queue to prevent concurrent handler execution
-      let processingMessage = false;
-      const messageQueue: (Buffer | string)[] = [];
-      const MAX_QUEUE_SIZE = 5; // Limit queue to prevent flooding
-      let parseErrorCount = 0; // Track parse errors for rate limiting
+      // Create message processor with isolated state for this connection
+      const messageProcessor = createMessageProcessor(id, socket, fastify);
 
-      async function processNextMessage() {
-        if (processingMessage || messageQueue.length === 0) return;
-
-        // Defensive: if queue grew beyond safe bounds, close connection
-        if (messageQueue.length > MAX_QUEUE_SIZE * 2) {
-          console.warn(
-            `Message queue overflow for session ${id}, closing connection`,
-          );
-          const errorMsg: ServerMessage = {
-            type: 'error',
-            message: 'Too many pending actions. Please reconnect.',
-          };
-          socket.send(JSON.stringify(errorMsg));
-          socket.close();
-          return;
-        }
-
-        processingMessage = true;
-        const rawMessage = messageQueue.shift();
-        if (!rawMessage) {
-          processingMessage = false;
-          return;
-        }
-
-        const messageStart = performance.now();
-
-        try {
-          // Check message size first
-          const rawMessageStr = rawMessage.toString();
-          if (rawMessageStr.length > MAX_MESSAGE_SIZE) {
-            console.warn(`Message too large: ${rawMessageStr.length} bytes`);
-            const errorMsg: ServerMessage = {
-              type: 'error',
-              message: 'Message too large',
-            };
-            socket.send(JSON.stringify(errorMsg));
-            socket.close();
-            return;
-          }
-
-          // Parse and validate message
-          let message: ClientMessage;
-          try {
-            const parsed = JSON.parse(rawMessageStr);
-            message = ClientMessageSchema.parse(parsed);
-          } catch (err) {
-            parseErrorCount++;
-            console.error(
-              `Invalid message format (${parseErrorCount}/${MAX_PARSE_ERRORS}):`,
-              err,
-            );
-
-            const errorMsg: ServerMessage = {
-              type: 'error',
-              message: 'Invalid message format',
-            };
-            socket.send(JSON.stringify(errorMsg));
-
-            // Rate limit parse errors
-            if (parseErrorCount >= MAX_PARSE_ERRORS) {
-              console.warn(
-                `Too many parse errors from ${id}, closing connection`,
-              );
-              socket.close();
-            }
-            return;
-          }
-
-          // Use info level to ensure it shows in logs
-          fastify.log.info(
-            `[WS] Processing message type: ${message.type} for game ${id}`,
-          );
-
-          // Handle pause/resume for real-time movement
-          if (message.type === 'pause') {
-            pauseSession(id);
-            return;
-          }
-          if (message.type === 'resume') {
-            resumeSession(id);
-            return;
-          }
-
-          // Update session activity on player actions
-          updateSessionActivity(id);
-
-          // Get game state from in-memory cache (no DB read)
-          game = getCachedGameState(id);
-
-          if (!game || game.status !== 'active') {
-            const errorMsg: ServerMessage = {
-              type: 'error',
-              message: 'Game is no longer active',
-            };
-            socket.send(JSON.stringify(errorMsg));
-            return;
-          }
-
-          if (message.type === 'move') {
-            const { direction } = message;
-            if (!isDirection(direction)) {
-              const errorMsg: ServerMessage = {
-                type: 'error',
-                message: 'Invalid direction',
-              };
-              socket.send(JSON.stringify(errorMsg));
-              return;
-            }
-
-            // Process move and get deltas - with performance monitoring
-            fastify.log.info(
-              `[WS] Calling processMoveWithDeltas for ${direction}`,
-            );
-            const moveStart = performance.now();
-            const { events, deltas } = processMoveWithDeltas(game, direction);
-            const moveTime = performance.now() - moveStart;
-
-            fastify.log.info(
-              `[PERF] processMoveWithDeltas completed in ${moveTime.toFixed(1)}ms`,
-            );
-            if (moveTime > 50) {
-              fastify.log.warn(
-                `[PERF] SLOW: processMoveWithDeltas took ${moveTime.toFixed(1)}ms for game ${id}`,
-              );
-            }
-
-            // Update in-memory cache (no DB write yet)
-            updateCachedGameState(id, game);
-
-            const currentStatus = readStatus(game);
-
-            // Save to DB only on checkpoints (level descend, death, win)
-            const isCheckpoint =
-              currentStatus === 'dead' ||
-              currentStatus === 'won' ||
-              deltas.some((d) => d.type === 'new_floor');
-
-            if (isCheckpoint) {
-              try {
-                await saveGameStateToDb(id);
-              } catch (err) {
-                console.error(`Failed to save checkpoint for ${id}:`, err);
-                const errorMsg: ServerMessage = {
-                  type: 'error',
-                  message: 'Failed to save game state. Please reconnect.',
-                };
-                socket.send(JSON.stringify(errorMsg));
-                socket.close();
-                return;
-              }
-            }
-
-            // Handle death/victory leaderboard submission
-            if (currentStatus === 'dead') {
-              const killedByEvent = events.find(isPlayerDiedEvent);
-              if (!killedByEvent) {
-                fastify.log.error(
-                  `CRITICAL: Player died but no player_died event found for game ${id}`,
-                );
-                throw new Error(
-                  'Player died without death event - data corruption',
-                );
-              }
-              const { killedBy, killedByType, killedByVariant } =
-                killedByEvent.data;
-              await leaderboard().insertOne({
-                _id: randomUUID(),
-                playerName: game.playerName,
-                score: game.score,
-                floor: game.floor,
-                killedBy,
-                killedByType,
-                killedByVariant,
-                createdAt: new Date(),
-              });
-            } else if (currentStatus === 'won') {
-              await leaderboard().insertOne({
-                _id: randomUUID(),
-                playerName: game.playerName,
-                score: game.score,
-                floor: game.floor,
-                killedBy: null,
-                killedByType: null,
-                killedByVariant: null,
-                createdAt: new Date(),
-              });
-            }
-
-            // Send deltas to client
-            const updateMsg: ServerMessage = {
-              type: 'update',
-              deltas,
-            };
-            socket.send(JSON.stringify(updateMsg));
-          } else if (message.type === 'attack') {
-            // Process attack (slash in facing direction) - with performance monitoring
-            const attackStart = performance.now();
-            const { events, deltas } = processAttackWithDeltas(game);
-            const attackTime = performance.now() - attackStart;
-
-            if (attackTime > 50) {
-              fastify.log.warn(
-                `[PERF] processAttackWithDeltas took ${attackTime.toFixed(1)}ms for game ${id}`,
-              );
-            }
-
-            // Update in-memory cache (no DB write yet)
-            updateCachedGameState(id, game);
-
-            const currentStatus = readStatus(game);
-
-            // Save to DB only on checkpoints (death)
-            if (currentStatus === 'dead') {
-              try {
-                await saveGameStateToDb(id);
-              } catch (err) {
-                console.error(`Failed to save checkpoint for ${id}:`, err);
-                const errorMsg: ServerMessage = {
-                  type: 'error',
-                  message: 'Failed to save game state. Please reconnect.',
-                };
-                socket.send(JSON.stringify(errorMsg));
-                socket.close();
-                return;
-              }
-
-              // Handle death leaderboard submission
-              const killedByEvent = events.find(isPlayerDiedEvent);
-              if (!killedByEvent) {
-                fastify.log.error(
-                  `CRITICAL: Player died but no player_died event found for game ${id}`,
-                );
-                throw new Error(
-                  'Player died without death event - data corruption',
-                );
-              }
-              const { killedBy, killedByType, killedByVariant } =
-                killedByEvent.data;
-              await leaderboard().insertOne({
-                _id: randomUUID(),
-                playerName: game.playerName,
-                score: game.score,
-                floor: game.floor,
-                killedBy,
-                killedByType,
-                killedByVariant,
-                createdAt: new Date(),
-              });
-            }
-
-            // Send deltas to client
-            const updateMsg: ServerMessage = {
-              type: 'update',
-              deltas,
-            };
-            socket.send(JSON.stringify(updateMsg));
-          }
-        } catch (err) {
-          fastify.log.error({ err }, `WebSocket message error for game ${id}`);
-          try {
-            const errorMsg: ServerMessage = {
-              type: 'error',
-              message: 'Invalid message format',
-            };
-            socket.send(JSON.stringify(errorMsg));
-          } catch (sendErr) {
-            // Socket closed between catch and send - safe to ignore
-            fastify.log.debug(
-              { err: sendErr },
-              `Failed to send error response for game ${id}`,
-            );
-          }
-        } finally {
-          const totalTime = performance.now() - messageStart;
-          if (totalTime > 100) {
-            fastify.log.warn(
-              `[PERF] Total message processing took ${totalTime.toFixed(1)}ms for game ${id}`,
-            );
-          }
-
-          processingMessage = false;
-          // Process next message in queue
-          try {
-            setImmediate(() => processNextMessage());
-          } catch {
-            // setImmediate itself won't fail, but defensive for future changes
-            processingMessage = false;
-          }
-        }
-      }
-
-      // Handle incoming messages - add to queue and process
+      // Handle incoming messages
       socket.on('message', (rawMessage: Buffer | string) => {
-        // Drop messages if queue is full to prevent server overload
-        if (messageQueue.length >= MAX_QUEUE_SIZE) {
-          return;
-        }
-        messageQueue.push(rawMessage);
-        processNextMessage();
+        messageProcessor.enqueueMessage(rawMessage);
       });
 
       socket.on('close', () => {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestGameState } from '@/test/helpers/gameStateHelpers.js';
+import type { GameWebSocket } from '@/types/database.js';
 import {
   getCachedGameState,
   pauseSession,
@@ -20,17 +21,12 @@ vi.mock('@/services/database.js', () => ({
   isDatabaseHealthy: vi.fn().mockResolvedValue(true),
 }));
 
-// Mock WebSocket
-interface GameWebSocket {
-  readyState: number;
-  send(data: string): void;
-}
-
 function createMockSocket(): GameWebSocket {
   return {
     readyState: 1,
     send: vi.fn(),
-  } as unknown as GameWebSocket;
+    close: vi.fn(),
+  };
 }
 
 describe('gameSessionManager', () => {

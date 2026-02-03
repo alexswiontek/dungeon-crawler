@@ -430,7 +430,8 @@ export type GameEventType =
   | 'xp_gained'
   | 'level_up'
   | 'equipment_equipped'
-  | 'equipment_found';
+  | 'equipment_found'
+  | 'equipment_ignored'; // Equipment found but not better than current gear
 
 // Typed event data for specific event types
 export interface PlayerAttackedEventData {

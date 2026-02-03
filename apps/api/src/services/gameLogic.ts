@@ -5,6 +5,7 @@ import {
   type Coordinate,
   type Direction,
   type Enemy,
+  type EnemyType,
   type Equipment,
   type GameDelta,
   type GameEvent,
@@ -23,11 +24,33 @@ import {
   type VisibleGameState,
 } from '@dungeon-crawler/shared';
 import { generateMap, initializeFog } from '@/services/mapGenerator.js';
+import {
+  getAttackType,
+  getAttackVerb,
+  getMissMessage,
+} from '@/utils/characterConfig.js';
+import {
+  calculateEnemyDamage,
+  calculatePlayerMeleeDamage,
+  calculatePlayerRangedDamage,
+} from '@/utils/combatUtils.js';
+import {
+  ENEMY_SCORES,
+  FLEE_HP_THRESHOLD,
+  FLOOR_DESCEND_SCORE_BONUS,
+  LEVEL_UP_ATTACK_GAIN,
+  LEVEL_UP_DEFENSE_GAIN,
+  LEVEL_UP_HEAL_PERCENTAGE,
+  LEVEL_UP_HP_GAIN,
+  MAX_FLOOR,
+  MAX_PATHFINDING_ENEMIES,
+  VICTORY_SCORE_BONUS,
+} from '@/utils/constants.js';
+import { logger } from '@/utils/logger.js';
 
-// Event ID generation - uses timestamp + counter for uniqueness
-let eventIdCounter = 0;
+// Event ID generation - uses crypto.randomUUID() for guaranteed uniqueness
 function generateEventId(): string {
-  return `${Date.now()}-${eventIdCounter++}`;
+  return randomUUID();
 }
 
 // ============================================
@@ -46,7 +69,7 @@ function isVisibleInFog(
 ): boolean {
   // Bounds check before accessing fog array
   if (y < 0 || y >= MAP_HEIGHT || x < 0 || x >= MAP_WIDTH) {
-    console.warn(`${entityType} at invalid coordinates: (${x}, ${y})`);
+    logger.warn({ entityType, x, y }, 'Entity at invalid coordinates');
     return false;
   }
 
@@ -64,11 +87,31 @@ export function getVisibleItems(state: GameState): Item[] {
 }
 
 export function getVisibleTiles(state: GameState): Tile[] {
+  // Defensive bounds checking for corrupted state
+  if (!state.map || state.map.length === 0) {
+    logger.error('Invalid game state: map is empty or undefined');
+    return [];
+  }
+
   const tiles: Tile[] = [];
-  for (let y = 0; y < state.map.length; y++) {
-    for (let x = 0; x < state.map[0].length; x++) {
-      if (state.fog[y][x]) {
-        tiles.push(state.map[y][x]);
+  const mapHeight = state.map.length;
+  const mapWidth = state.map[0]?.length ?? 0;
+  const fogHeight = state.fog?.length ?? 0;
+
+  if (mapWidth === 0) {
+    logger.error('Invalid game state: map width is zero');
+    return [];
+  }
+
+  for (let y = 0; y < Math.min(mapHeight, fogHeight); y++) {
+    const fogRow = state.fog[y];
+    const mapRow = state.map[y];
+
+    if (!fogRow || !mapRow) continue;
+
+    for (let x = 0; x < mapWidth; x++) {
+      if (fogRow[x] === true && mapRow[x]) {
+        tiles.push(mapRow[x]);
       }
     }
   }
@@ -502,50 +545,6 @@ export function processMove(
   return events;
 }
 
-// Get attack type based on character
-function getAttackType(
-  character: CharacterType,
-): 'bolt' | 'dagger' | 'magic_dagger' | 'spell' {
-  switch (character) {
-    case 'bandit':
-      return 'bolt';
-    case 'wizard':
-      return 'spell';
-    case 'elf':
-      return 'magic_dagger';
-    default:
-      return 'dagger';
-  }
-}
-
-// Get attack verb for messages
-function getAttackVerb(character: CharacterType): string {
-  switch (character) {
-    case 'bandit':
-      return 'Your bolt hits';
-    case 'wizard':
-      return 'Your spell blasts';
-    case 'elf':
-      return 'Your magic dagger strikes';
-    default:
-      return 'Your dagger strikes';
-  }
-}
-
-// Get miss message based on character
-function getMissMessage(character: CharacterType): string {
-  switch (character) {
-    case 'bandit':
-      return 'Your bolt missed!';
-    case 'wizard':
-      return 'Your spell missed!';
-    case 'elf':
-      return 'Your magic dagger missed!';
-    default:
-      return 'Your dagger missed!';
-  }
-}
-
 // Process ranged attack action (spacebar - shoots in facing direction)
 export function processAttack(state: GameState): GameEvent[] {
   const events: GameEvent[] = [];
@@ -609,7 +608,7 @@ export function processAttack(state: GameState): GameEvent[] {
 
   if (hitEnemy) {
     // Calculate damage (ranged damage - enemy defense, minimum 1)
-    const damage = Math.max(1, rangedDamage - hitEnemy.defense);
+    const damage = calculatePlayerRangedDamage(rangedDamage, hitEnemy);
     hitEnemy.hp -= damage;
 
     const eventData: RangedAttackEventData = {
@@ -765,7 +764,7 @@ function attackEnemy(state: GameState, enemy: Enemy): GameEvent[] {
   const events: GameEvent[] = [];
 
   // Calculate damage
-  const damage = Math.max(1, state.player.attack - enemy.defense);
+  const damage = calculatePlayerMeleeDamage(state.player.attack, enemy);
   enemy.hp -= damage;
 
   events.push({
@@ -816,13 +815,15 @@ function grantXp(state: GameState, enemy: Enemy): GameEvent[] {
     state.player.level += 1;
 
     // Stat gains per level
-    const hpGained = 3;
-    const attackGained = 1;
-    const defenseGained = 1;
+    const hpGained = LEVEL_UP_HP_GAIN;
+    const attackGained = LEVEL_UP_ATTACK_GAIN;
+    const defenseGained = LEVEL_UP_DEFENSE_GAIN;
 
     state.player.maxHp += hpGained;
     // Heal 50% of max HP on level up (not full heal)
-    const healAmount = Math.floor(state.player.maxHp * 0.5);
+    const healAmount = Math.floor(
+      state.player.maxHp * LEVEL_UP_HEAL_PERCENTAGE,
+    );
     state.player.hp = Math.min(
       state.player.maxHp,
       state.player.hp + healAmount,
@@ -847,19 +848,8 @@ function grantXp(state: GameState, enemy: Enemy): GameEvent[] {
   return events;
 }
 
-function getEnemyScore(type: string): number {
-  switch (type) {
-    case 'rat':
-      return 10;
-    case 'skeleton':
-      return 25;
-    case 'orc':
-      return 50;
-    case 'dragon':
-      return 200;
-    default:
-      return 10;
-  }
+function getEnemyScore(type: EnemyType): number {
+  return ENEMY_SCORES[type];
 }
 
 // Calculate total stat bonus from equipment
@@ -933,9 +923,10 @@ function handleEquipmentPickup(
     });
   } else {
     // Equipment is not better, leave it on the ground
+    // Generate "equipment_ignored" event (will trigger each time player steps on it)
     events.push({
       id: generateEventId(),
-      type: 'equipment_found',
+      type: 'equipment_ignored',
       message: `Found ${equipment.name}, but your current gear is better.`,
       data: { equipment, notBetter: true },
     });
@@ -1003,22 +994,15 @@ export function hasLineOfSight(
 
     // Deadlock detection: neither coordinate advanced
     if (x === prevX && y === prevY) {
-      console.error('[LOS] Deadlock detected:', {
-        x1,
-        y1,
-        x2,
-        y2,
-        x,
-        y,
-        dx,
-        dy,
-        err,
-      });
+      logger.error(
+        { x1, y1, x2, y2, x, y, dx, dy, err },
+        '[LOS] Deadlock detected',
+      );
       return false;
     }
   }
 
-  console.error('[LOS] Max iterations exceeded:', { x1, y1, x2, y2 });
+  logger.error({ x1, y1, x2, y2 }, '[LOS] Max iterations exceeded');
   return false;
 }
 
@@ -1063,13 +1047,10 @@ export function findPathToTarget(
   let current = queue.shift();
   while (current) {
     if (++iterations > MAX_ITERATIONS) {
-      console.error('[BFS] Max iterations exceeded', {
-        startX,
-        startY,
-        targetX,
-        targetY,
-        iterations,
-      });
+      logger.error(
+        { startX, startY, targetX, targetY, iterations },
+        '[BFS] Max iterations exceeded',
+      );
       return null;
     }
     // Limit search distance - must get next item, not continue!
@@ -1162,7 +1143,7 @@ export function canMoveToTile(
 function enemyAttackPlayer(state: GameState, enemy: Enemy): GameEvent[] {
   const events: GameEvent[] = [];
 
-  const damage = Math.max(1, enemy.attack - state.player.defense);
+  const damage = calculateEnemyDamage(enemy, state.player.defense);
   state.player.hp -= damage;
 
   events.push({
@@ -1198,7 +1179,7 @@ function isAdjacentToPlayer(enemy: Enemy, px: number, py: number): boolean {
 }
 
 // Max enemies to process pathfinding for per turn (performance optimization)
-const MAX_PATHFINDING_ENEMIES = 5;
+// Imported from constants
 
 function moveEnemies(state: GameState): GameEvent[] {
   const moveStart = performance.now();
@@ -1240,18 +1221,58 @@ function moveEnemies(state: GameState): GameEvent[] {
         // Flee behavior: run away when HP is low (below 30%)
         if (enemy.behavior === 'flee') {
           const hpPercent = enemy.hp / enemy.maxHp;
-          if (hpPercent < 0.3 && canSeePlayer) {
-            // Move away from player
-            const fleeX = enemy.x + (enemy.x > px ? 1 : -1);
-            const fleeY = enemy.y + (enemy.y > py ? 1 : -1);
+          if (hpPercent < FLEE_HP_THRESHOLD && canSeePlayer) {
+            // Move away from player using 8-directional movement
+            const dx = enemy.x > px ? 1 : enemy.x < px ? -1 : 0;
+            const dy = enemy.y > py ? 1 : enemy.y < py ? -1 : 0;
 
-            // Try horizontal flee first, then vertical
-            if (canMoveToTile(state, enemy, fleeX, enemy.y)) {
-              enemy.x = fleeX;
-            } else if (canMoveToTile(state, enemy, enemy.x, fleeY)) {
-              enemy.y = fleeY;
+            // Try diagonal first (most effective escape)
+            if (
+              dx !== 0 &&
+              dy !== 0 &&
+              canMoveToTile(state, enemy, enemy.x + dx, enemy.y + dy)
+            ) {
+              enemy.x += dx;
+              enemy.y += dy;
+              continue;
             }
-            continue;
+            // Then horizontal
+            else if (
+              dx !== 0 &&
+              canMoveToTile(state, enemy, enemy.x + dx, enemy.y)
+            ) {
+              enemy.x += dx;
+              continue;
+            }
+            // Then vertical
+            else if (
+              dy !== 0 &&
+              canMoveToTile(state, enemy, enemy.x, enemy.y + dy)
+            ) {
+              enemy.y += dy;
+              continue;
+            }
+            // Final fallback: try any adjacent empty tile (strafe)
+            else {
+              const options = [
+                { x: enemy.x + 1, y: enemy.y },
+                { x: enemy.x - 1, y: enemy.y },
+                { x: enemy.x, y: enemy.y + 1 },
+                { x: enemy.x, y: enemy.y - 1 },
+                { x: enemy.x + 1, y: enemy.y + 1 },
+                { x: enemy.x - 1, y: enemy.y - 1 },
+                { x: enemy.x + 1, y: enemy.y - 1 },
+                { x: enemy.x - 1, y: enemy.y + 1 },
+              ];
+              for (const opt of options) {
+                if (canMoveToTile(state, enemy, opt.x, opt.y)) {
+                  enemy.x = opt.x;
+                  enemy.y = opt.y;
+                  break;
+                }
+              }
+              continue;
+            }
           }
           // If not low HP, fall through to aggressive behavior
         }
@@ -1360,8 +1381,13 @@ function moveEnemies(state: GameState): GameEvent[] {
 
   const moveTime = performance.now() - moveStart;
   if (moveTime > 50) {
-    console.warn(
-      `[PERF] moveEnemies took ${moveTime.toFixed(1)}ms (pathfinding: ${pathfindingCount} calls, ${pathfindingTotalTime.toFixed(1)}ms total)`,
+    logger.warn(
+      {
+        moveTime: moveTime.toFixed(1),
+        pathfindingCount,
+        pathfindingTotalTime: pathfindingTotalTime.toFixed(1),
+      },
+      '[PERF] moveEnemies slow',
     );
   }
 
@@ -1399,7 +1425,7 @@ export function descendStairs(state: GameState): GameEvent[] {
   // Reveal area around player
   updateFog(state);
 
-  state.score += 100;
+  state.score += FLOOR_DESCEND_SCORE_BONUS;
   state.updatedAt = new Date();
 
   events.push({
@@ -1409,9 +1435,9 @@ export function descendStairs(state: GameState): GameEvent[] {
   });
 
   // Win condition: reach floor 20
-  if (state.floor >= 20) {
+  if (state.floor >= MAX_FLOOR) {
     state.status = 'won';
-    state.score += 1000;
+    state.score += VICTORY_SCORE_BONUS;
     events.push({
       id: generateEventId(),
       type: 'game_won',

@@ -4,6 +4,11 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
+import {
+  serializerCompiler,
+  validatorCompiler,
+  type ZodTypeProvider,
+} from 'fastify-type-provider-zod';
 import { gameRoutes } from '@/routes/game.js';
 import { leaderboardRoutes } from '@/routes/leaderboard.js';
 import {
@@ -11,17 +16,53 @@ import {
   connectToDatabase,
   isDatabaseHealthy,
 } from '@/services/database.js';
+import {
+  cleanupAllSessions,
+  startCleanupInterval,
+} from '@/services/gameSessionManager.js';
+import {
+  RATE_LIMIT_MAX_REQUESTS,
+  RATE_LIMIT_TIME_WINDOW,
+} from '@/utils/constants.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-// CORS Configuration
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(',') || [
-  'http://localhost:5173',
-];
+// Validate PORT - use console.error here since logger isn't initialized yet
+if (Number.isNaN(PORT) || PORT < 1 || PORT > 65535) {
+  console.error(`Invalid PORT: ${process.env.PORT}. Server cannot start.`);
+  process.exit(1);
+}
+
+// CORS Configuration - filter out empty strings and whitespace
+const ALLOWED_ORIGINS = (
+  process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173']
+)
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0);
 
 const fastify = Fastify({
-  logger: true,
-});
+  logger:
+    process.env.NODE_ENV === 'production'
+      ? {
+          level: 'warn', // Only log warnings and errors in production
+        }
+      : {
+          level: 'info', // Log everything in development
+          transport: {
+            target: 'pino-pretty',
+            options: {
+              colorize: true,
+              translateTime: 'HH:MM:ss',
+              ignore: 'pid,hostname',
+              errorLikeObjectKeys: ['err', 'error'],
+            },
+          },
+        },
+}).withTypeProvider<ZodTypeProvider>();
+
+// Set Zod validator and serializer
+fastify.setValidatorCompiler(validatorCompiler);
+fastify.setSerializerCompiler(serializerCompiler);
 
 await fastify.register(cors, {
   origin: (origin, cb) => {
@@ -41,37 +82,60 @@ await fastify.register(helmet, {
 // Rate limiting
 await fastify.register(rateLimit, {
   global: true,
-  max: 100, // 100 requests
-  timeWindow: '1 minute',
+  max: RATE_LIMIT_MAX_REQUESTS,
+  timeWindow: RATE_LIMIT_TIME_WINDOW,
 });
 
 await fastify.register(websocket);
 
 // Register routes
-fastify.register(gameRoutes, { prefix: '/game' });
-fastify.register(leaderboardRoutes, { prefix: '/leaderboard' });
+await fastify.register(gameRoutes, { prefix: '/game' });
+await fastify.register(leaderboardRoutes, { prefix: '/leaderboard' });
 
 // Health check
 fastify.get('/health', async (_request, reply) => {
-  const dbHealthy = await isDatabaseHealthy();
-  if (!dbHealthy) {
-    return reply.status(503).send({ status: 'error', db: 'disconnected' });
+  try {
+    // Add timeout to health check to prevent hanging
+    const dbHealthyPromise = isDatabaseHealthy();
+    const timeoutPromise = new Promise<boolean>((resolve) =>
+      setTimeout(() => resolve(false), 5000),
+    ); // 5s timeout
+    const dbHealthy = await Promise.race([dbHealthyPromise, timeoutPromise]);
+
+    if (!dbHealthy) {
+      return reply.status(503).send({ status: 'error', db: 'disconnected' });
+    }
+    return { status: 'ok', db: 'connected' };
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    fastify.log.error({ err: error }, 'Health check failed');
+    return reply.status(503).send({ status: 'error', db: 'check_failed' });
   }
-  return { status: 'ok', db: 'connected' };
 });
 
 const start = async () => {
   try {
     await connectToDatabase();
     await fastify.listen({ port: PORT, host: '0.0.0.0' });
-  } catch (err) {
-    fastify.log.error(err);
+    fastify.log.info(`Server listening on http://0.0.0.0:${PORT}`);
+
+    // Start cleanup interval for stale sessions
+    startCleanupInterval();
+    fastify.log.info(`CORS enabled for origins: ${ALLOWED_ORIGINS.join(', ')}`);
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    fastify.log.error({ err: error }, 'Failed to start server');
+    await closeDatabase();
+    await fastify.close().catch(() => {}); // Ignore close errors
     process.exit(1);
   }
 };
 
 // Graceful shutdown
 const shutdown = async () => {
+  // Clean up game sessions first
+  await cleanupAllSessions();
+  // Then close database
   await closeDatabase();
   await fastify.close();
   process.exit(0);
