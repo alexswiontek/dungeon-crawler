@@ -5,6 +5,7 @@ A browser-based dungeon crawler game built with TypeScript, React, Fastify, and 
 ## Overview
 
 A full-stack TypeScript game featuring:
+
 - **Real-time WebSocket gameplay** with delta updates (not full state polling)
 - **Turn-based dungeon crawler mechanics** with permadeath
 - **Procedurally generated dungeons** using Binary Space Partitioning
@@ -16,7 +17,8 @@ A full-stack TypeScript game featuring:
 ## Quick Start
 
 ### Prerequisites
-- Node.js 25+
+
+- Node.js 24+
 - pnpm
 - Docker & Docker Compose (optional, for MongoDB)
 
@@ -39,13 +41,13 @@ cp apps/api/.env.example apps/api/.env
 cp apps/ui/.env.example apps/ui/.env
 ```
 
-| App | Variable | Description |
-|-----|----------|-------------|
-| API | `PORT` | Server port (default: `3000`) |
-| API | `MONGODB_URI` | MongoDB connection string |
-| API | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins (optional) |
-| API | `NODE_ENV` | Environment (`development`, `production`, `test`) (default: `development`) |
-| UI | `VITE_API_URL` | API URL for production (empty for local dev) |
+| App | Variable          | Description                                                                |
+| --- | ----------------- | -------------------------------------------------------------------------- |
+| API | `PORT`            | Server port (default: `3000`)                                              |
+| API | `MONGODB_URI`     | MongoDB connection string                                                  |
+| API | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins (optional)                    |
+| API | `NODE_ENV`        | Environment (`development`, `production`, `test`) (default: `development`) |
+| UI  | `VITE_API_URL`    | API URL for production (empty for local dev)                               |
 
 ### Development
 
@@ -130,18 +132,21 @@ dungeon-crawler/
 ## Tech Stack
 
 ### Backend
+
 - **Fastify** - Fast, low-overhead web framework
 - **@fastify/websocket** - WebSocket support for real-time updates
 - **MongoDB** - Document database for game state and leaderboards
 - **TypeScript** - Type-safe development
 
 ### Frontend
+
 - **React 18** - UI framework
 - **Vite 5** - Fast build tool and dev server
 - **Tailwind CSS v4** - Utility-first CSS
 - **TypeScript** - Type-safe development
 
 ### Infrastructure
+
 - **pnpm** - Fast, efficient package manager
 - **Docker Compose** - Container orchestration
 - **Biome** - Fast linter and formatter
@@ -149,14 +154,18 @@ dungeon-crawler/
 ## Architecture Highlights
 
 ### WebSocket + Delta Updates
+
 Instead of sending the full game state (~50KB) on every move, the server sends only **deltas** (~200 bytes):
+
 - Player position changes
 - Enemy movements (only visible enemies)
 - Fog of war reveals
 - Combat events
 
 ### Anti-Cheat
+
 The server never sends data outside the player's fog of war:
+
 - Hidden enemies are not transmitted
 - Map tiles only sent when revealed
 - All game logic runs server-side
@@ -166,20 +175,20 @@ The server never sends data outside the player's fog of war:
 ### Environment Variables
 
 **Local development**: Copy each app's `.env.example` to `.env` (see [Configuration](#configuration)).
-
 **Production**: Set environment variables in your hosting platform (never commit `.env` files):
+
 - **Fly.io** (API): Set `MONGODB_URI` to your Atlas connection string and `ALLOWED_ORIGINS` to your frontend URL
-- **Amplify** (UI): Set `VITE_API_URL` to your Fly.io API URL
+- **Vercel** (UI): Set `VITE_API_URL` to your Fly.io API URL
 
 ### AWS Deployment (Monorepo)
 
 This monorepo deploys as two separate services:
 
-| Component | Service | Source |
-|-----------|---------|--------|
-| UI | AWS Amplify Hosting | `apps/ui` |
-| API | Fly.io | `apps/api` |
-| DB | MongoDB Atlas | External |
+| Component | Service       |
+| --------- | ------------- |
+| UI        | Vercel        |
+| API       | Fly.io        |
+| DB        | MongoDB Atlas |
 
 #### Manual Fly.io Setup
 
