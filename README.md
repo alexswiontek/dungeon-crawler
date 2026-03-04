@@ -180,15 +180,26 @@ The server never sends data outside the player's fog of war:
 - **Fly.io** (API): Set `MONGODB_URI` to your Atlas connection string and `ALLOWED_ORIGINS` to your frontend URL
 - **Vercel** (UI): Set `VITE_API_URL` to your Fly.io API URL
 
-### AWS Deployment (Monorepo)
+### Deployment
 
-This monorepo deploys as two separate services:
+This monorepo deploys as three separate services:
 
 | Component | Service       |
 | --------- | ------------- |
 | UI        | Vercel        |
 | API       | Fly.io        |
 | DB        | MongoDB Atlas |
+
+### Vercel
+
+Set up the following config:
+
+| Config           | Value                             |
+| ---------------- | --------------------------------- |
+| Framework        | Vite                              |
+| Build Command    | `pnpm build:ui`                   |
+| Output Directory | `apps/ui/dist`                    |
+| Install Command  | `corepack enable && pnpm install` |
 
 #### Manual Fly.io Setup
 

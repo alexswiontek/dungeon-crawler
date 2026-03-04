@@ -8,6 +8,7 @@
     "dev:api": "pnpm --filter @dungeon-crawler/api dev",
     "dev:ui": "pnpm --filter @dungeon-crawler/ui dev",
     "build": "pnpm --filter @dungeon-crawler/shared build && pnpm --filter @dungeon-crawler/api build && pnpm --filter @dungeon-crawler/ui build",
+    "build:ui": "pnpm --filter @dungeon-crawler/shared build && pnpm --filter @dungeon-crawler/ui build",
     "lint": "biome check .",
     "format": "biome check --write .",
     "verify": "pnpm format && pnpm typecheck && pnpm lint && pnpm test",
