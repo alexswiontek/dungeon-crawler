@@ -20,7 +20,7 @@ import {
 
 const CHARACTERS: CharacterType[] = ['dwarf', 'elf', 'bandit', 'wizard'];
 
-describe('pre-modernization gameplay characterization', () => {
+describe('gameplay characterization', () => {
   describe.each(CHARACTERS)('%s', (character) => {
     it('can move, attack at range, descend, and finish the game', () => {
       const state = createTestGameState({

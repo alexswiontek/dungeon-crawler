@@ -25,7 +25,7 @@ integration('MongoDB game command integration', () => {
       connectTimeoutMS: 5_000,
     });
     await client.connect();
-    database = client.db(`dc_phase3_test_${randomUUID()}`);
+    database = client.db(`dc_mongodb_test_${randomUUID()}`);
     await database
       .collection('games')
       .createIndex(

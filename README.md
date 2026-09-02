@@ -140,11 +140,11 @@ docker build --no-cache -f apps/ui/Dockerfile -t dungeon-crawler-ui:local .
 For an isolated Compose smoke run, choose a unique project name and host port so its network, MongoDB volume, and port cannot collide with another run:
 
 ```bash
-MONGO_HOST_PORT=27018 docker compose -p dc-phase7-smoke up -d --build --wait
+MONGO_HOST_PORT=27018 docker compose -p dc-smoke up -d --build --wait
 curl --fail http://localhost:5173/
 curl --fail http://localhost:5173/api/health
 curl --fail http://localhost:5173/nonexistent-spa-route
-docker compose -p dc-phase7-smoke down --volumes
+docker compose -p dc-smoke down --volumes
 ```
 
 MongoDB remains a separate Compose service. API startup creates the required indexes through normal application behavior, and `/health` reports database connectivity. The API port is exposed only inside the Compose network so nginx is the sole trusted proxy boundary. The nginx container serves the built UI, forwards client identity for per-client rate limiting, falls back to `index.html` for client routes, and proxies `/api` to the API service.
@@ -158,9 +158,11 @@ MongoDB remains a separate Compose service. API startup creates the required ind
 5. Walk onto the stairs to descend.
 6. Escape floor 20 to win.
 
-## Deployment boundary
+## Deployment
 
-Production deployment is owner-managed from a separate machine. This repository defines the API image through `fly.toml`, but Phase 7 does not deploy, change production secrets, create infrastructure, publish images, configure DNS, or connect to MongoDB Atlas. The owner must supply production `MONGODB_URI` and `ALLOWED_ORIGINS` values through the deployment platform and choose the UI hosting path later.
+The API Docker image is configured for Fly through `fly.toml`. Set `MONGODB_URI` and `ALLOWED_ORIGINS` as Fly secrets, then deploy from the repository root with `fly deploy`.
+
+The UI builds as a static Vite application and can deploy to Vercel with `pnpm build:ui` and the `apps/ui/dist` output directory. Set `VITE_API_URL` to the public Fly API URL before building because Vite embeds it in the browser bundle.
 
 ## License
 

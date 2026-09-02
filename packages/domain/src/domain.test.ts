@@ -13,7 +13,7 @@ import {
   recalculateVisibility,
 } from './index.js';
 
-function context(seed = 'phase-1'): GameCommandContext {
+function context(seed = 'domain-test'): GameCommandContext {
   return {
     clock: fixedClock('2026-08-18T12:00:00.000Z'),
     random: createSeededRandom(seed),
