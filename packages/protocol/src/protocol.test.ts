@@ -166,6 +166,19 @@ describe('wire protocol', () => {
     expect(projection.visibleNow[1][1]).toBe(false);
   });
 
+  it('omits null enemy memory loaded from MongoDB', () => {
+    const state = stateFixture();
+    (state.enemies[0] as unknown as Record<string, unknown>).lastSeenPlayer =
+      null;
+
+    const projection = projectGameState(state);
+
+    expect(projection.visibleEnemies[0]).not.toHaveProperty('lastSeenPlayer');
+    expect(() =>
+      GameStateResponseSchema.parse({ revision: 0, state: projection }),
+    ).not.toThrow();
+  });
+
   it('uses the same projection diff for visibility transitions after any command', () => {
     const state = stateFixture();
     const before = projectGameState(state);

@@ -17,10 +17,11 @@ function clonePlayer(player: Player): Player {
 }
 
 function cloneEnemy(enemy: Enemy): Enemy {
+  const { lastSeenPlayer, ...visibleEnemy } = enemy;
   return {
-    ...enemy,
-    ...(enemy.lastSeenPlayer && {
-      lastSeenPlayer: { ...enemy.lastSeenPlayer },
+    ...visibleEnemy,
+    ...(lastSeenPlayer && {
+      lastSeenPlayer: { ...lastSeenPlayer },
     }),
   };
 }

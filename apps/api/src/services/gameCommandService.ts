@@ -435,34 +435,6 @@ export function createGameCommandService(
       return { result: cached, outcome: 'exact_retry' };
     }
 
-    let actionOwner: StoredGameDocument | null;
-    try {
-      actionOwner = await games().findOne(
-        {
-          _id: { $ne: request.gameId },
-          'actionReceipts.actionId': request.actionId,
-        },
-        { projection: { _id: 1 } },
-      );
-    } catch (error) {
-      dependencies.logger.error(
-        {
-          ...databaseErrorMetadata(error),
-          gameId: request.gameId,
-          actionId: request.actionId,
-        },
-        'Action identity lookup failed',
-      );
-      throw databaseFailure();
-    }
-    if (actionOwner) {
-      throw new GameServiceError(
-        'ACTION_ID_REUSED',
-        'This action ID was already used for a different game',
-        { actionId: request.actionId },
-      );
-    }
-
     if (document.game.status !== 'active') {
       throw new GameServiceError('GAME_FINISHED', 'Game is already finished', {
         actionId: request.actionId,

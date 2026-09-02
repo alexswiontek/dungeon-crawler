@@ -69,6 +69,7 @@ await fastify.register(cors, {
   delegator: (req, cb) => {
     const corsOptions: FastifyCorsOptions = {
       exposedHeaders: [GAMEPLAY_PROTOCOL_HEADER],
+      maxAge: 86_400,
       origin: (
         origin: string | undefined,
         callback: (err: Error | null, origin: string | boolean) => void,

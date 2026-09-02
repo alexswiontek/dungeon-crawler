@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Verify, test, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js and pnpm
+        uses: pnpm/setup@v2
+        with:
+          version: 11.24.0
+          runtime: node@24.19.0
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify source
+        run: pnpm verify
+
+      - name: Run MongoDB integration tests
+        run: pnpm test:integration
+        env:
+          MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?directConnection=true
+
+      - name: Build production artifacts
+        run: pnpm build

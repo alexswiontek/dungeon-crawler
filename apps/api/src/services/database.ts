@@ -8,6 +8,7 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const mongoOptions: MongoClientOptions = {
   maxPoolSize: 10,
   minPoolSize: 2,
+  ignoreUndefined: true,
   retryWrites: true,
   retryReads: true,
   connectTimeoutMS: 5000, // Reduced from 10s to 5s for faster failure
