@@ -25,6 +25,7 @@ class StoreHelpersBuilder {
   ): VisibleGameState {
     const defaultState: VisibleGameState = {
       _id: 'test-game-id',
+      revision: 0,
       playerName: 'TestPlayer',
       floor: 1,
       player: {
@@ -54,22 +55,26 @@ class StoreHelpersBuilder {
       ],
       visibleEnemies: [],
       visibleItems: [],
-      fog: Array.from({ length: MAP_HEIGHT }, () =>
+      explored: Array.from({ length: MAP_HEIGHT }, () =>
+        Array.from({ length: MAP_WIDTH }, () => false),
+      ),
+      visibleNow: Array.from({ length: MAP_HEIGHT }, () =>
         Array.from({ length: MAP_WIDTH }, () => false),
       ),
       status: 'active',
       score: 0,
     };
 
-    // Set fog to true around player position for default state
-    if (!overrides?.fog) {
+    // Set explored/current visibility around the player for the default state.
+    if (!overrides?.explored && !overrides?.visibleNow) {
       for (let y = 0; y < MAP_HEIGHT; y++) {
         for (let x = 0; x < MAP_WIDTH; x++) {
           const dx = x - defaultState.player.x;
           const dy = y - defaultState.player.y;
           if (dx * dx + dy * dy <= 25) {
             // vision radius squared
-            defaultState.fog[y][x] = true;
+            defaultState.explored[y][x] = true;
+            defaultState.visibleNow[y][x] = true;
           }
         }
       }
@@ -147,8 +152,9 @@ class StoreHelpersBuilder {
       id: 'test-event-id',
       type: 'player_moved',
       message: 'Test message',
+      data: { direction: 'right' },
       ...overrides,
-    };
+    } as GameEvent;
   }
 
   // Delta creators
@@ -215,6 +221,10 @@ class StoreHelpersBuilder {
 
     fogReveal: (cells: [number, number][]): GameDelta => {
       return { type: 'fog_reveal', cells };
+    },
+
+    visibility: (visibleNow: boolean[][]): GameDelta => {
+      return { type: 'visibility', visibleNow };
     },
 
     tilesReveal: (tiles: Tile[]): GameDelta => {

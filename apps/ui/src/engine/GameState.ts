@@ -1,19 +1,17 @@
 // GameState - Mutable state buffer for canvas rendering
-// This class is NOT React state - it's mutated directly by WebSocket updates
-// and read by the RAF render loop without causing React re-renders.
+// This class is not React state. The renderer reads it without React updates.
 
 import type {
   CharacterType,
   Enemy,
   Equipment,
   FacingDirection,
-  GameDelta,
   GameStatus,
   Item,
   Tile,
-  VisibleGameState,
-} from '@dungeon-crawler/shared';
-import { MAP_HEIGHT, MAP_WIDTH } from '@dungeon-crawler/shared';
+} from '@dungeon-crawler/domain';
+import { MAP_HEIGHT, MAP_WIDTH } from '@dungeon-crawler/domain';
+import type { GameDelta, VisibleGameState } from '@dungeon-crawler/protocol';
 
 export interface PlayerState {
   x: number;
@@ -46,13 +44,15 @@ export interface PlayerState {
  */
 export class GameState {
   _id = '';
+  revision = 0;
   playerName = '';
   floor = 1;
   player: PlayerState | null = null;
   map: (Tile | null)[][] = [];
   enemies = new Map<string, Enemy>();
   items = new Map<string, Item>();
-  fog: boolean[][] = [];
+  explored: boolean[][] = [];
+  visibleNow: boolean[][] = [];
   status: GameStatus = 'active';
   score = 0;
 
@@ -61,7 +61,8 @@ export class GameState {
 
   constructor() {
     this.map = this.createEmptyMap();
-    this.fog = this.createEmptyFog();
+    this.explored = this.createEmptyVisibility();
+    this.visibleNow = this.createEmptyVisibility();
   }
 
   private createEmptyMap(): (Tile | null)[][] {
@@ -70,7 +71,7 @@ export class GameState {
     );
   }
 
-  private createEmptyFog(): boolean[][] {
+  private createEmptyVisibility(): boolean[][] {
     return Array.from({ length: MAP_HEIGHT }, () =>
       Array.from({ length: MAP_WIDTH }, () => false),
     );
@@ -78,10 +79,11 @@ export class GameState {
 
   /**
    * Initialize state from server's visible game state.
-   * Used on initial load and reconnection.
+   * Used after authoritative HTTP responses.
    */
   initFromVisible(visible: VisibleGameState): void {
     this._id = visible._id;
+    this.revision = visible.revision;
     this.playerName = visible.playerName;
     this.floor = visible.floor;
     this.player = { ...visible.player };
@@ -106,8 +108,8 @@ export class GameState {
       this.items.set(item.id, item);
     }
 
-    // Copy fog
-    this.fog = visible.fog.map((row) => [...row]);
+    this.explored = visible.explored.map((row) => [...row]);
+    this.visibleNow = visible.visibleNow.map((row) => [...row]);
 
     this.version++;
   }
@@ -191,13 +193,17 @@ export class GameState {
         for (const [x, y] of delta.cells) {
           if (
             y >= 0 &&
-            y < this.fog.length &&
+            y < this.explored.length &&
             x >= 0 &&
-            x < this.fog[0].length
+            x < this.explored[0].length
           ) {
-            this.fog[y][x] = true;
+            this.explored[y][x] = true;
           }
         }
+        break;
+
+      case 'visibility':
+        this.visibleNow = delta.visibleNow.map((row) => [...row]);
         break;
 
       case 'tiles_reveal':
@@ -237,13 +243,15 @@ export class GameState {
    */
   reset(): void {
     this._id = '';
+    this.revision = 0;
     this.playerName = '';
     this.floor = 1;
     this.player = null;
     this.map = this.createEmptyMap();
     this.enemies.clear();
     this.items.clear();
-    this.fog = this.createEmptyFog();
+    this.explored = this.createEmptyVisibility();
+    this.visibleNow = this.createEmptyVisibility();
     this.status = 'active';
     this.score = 0;
     this.version++;

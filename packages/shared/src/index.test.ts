@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   CHARACTER_STATS,
   type CharacterType,
@@ -13,8 +13,18 @@ import {
   getXpToNextLevel,
   isDirection,
   isEquipmentItem,
+  type RandomSource,
   VARIANT_MULTIPLIERS,
 } from './index.js';
+
+function randomSource(value = 0.99): RandomSource {
+  return {
+    next: () => value,
+    integer: (min, max) =>
+      Math.min(max, Math.max(min, Math.floor(min + value * (max - min + 1)))),
+    id: (prefix = 'id') => `${prefix}-test`,
+  };
+}
 
 describe('Constants Validation', () => {
   describe('CHARACTER_STATS', () => {
@@ -141,7 +151,7 @@ describe('getEnemyVariant', () => {
   it('should return a valid variant', () => {
     const validVariants: EnemyVariant[] = ['normal', 'elite', 'champion'];
     for (let floor = 1; floor <= 10; floor++) {
-      const variant = getEnemyVariant(floor);
+      const variant = getEnemyVariant(floor, randomSource());
       expect(validVariants).toContain(variant);
     }
   });
@@ -157,31 +167,25 @@ describe('getEnemyVariant', () => {
   it('should have 0% champion chance on floor 1', () => {
     // Champion chance = max(0, (floor - 1) * 0.04)
     // Floor 1: (1-1) * 0.04 = 0
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    const variant = getEnemyVariant(1);
+    const variant = getEnemyVariant(1, randomSource(0));
     // With roll = 0 and championChance = 0, should get elite or normal
     expect(variant).not.toBe('champion');
-    vi.restoreAllMocks();
   });
 
   it('should return normal when roll is high', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.99);
-    const variant = getEnemyVariant(1);
+    const variant = getEnemyVariant(1, randomSource());
     expect(variant).toBe('normal');
-    vi.restoreAllMocks();
   });
 
   it('should return champion when roll is very low on higher floors', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.01);
-    const variant = getEnemyVariant(5); // Champion chance ~16%
+    const variant = getEnemyVariant(5, randomSource(0.01)); // Champion chance ~16%
     expect(variant).toBe('champion');
-    vi.restoreAllMocks();
   });
 });
 
 describe('createEnemy', () => {
   it('should create an enemy with correct base properties', () => {
-    const enemy = createEnemy('test-id', 'rat', 5, 10, 1);
+    const enemy = createEnemy('test-id', 'rat', 5, 10, 1, randomSource());
 
     expect(enemy.id).toBe('test-id');
     expect(enemy.type).toBe('rat');
@@ -193,11 +197,10 @@ describe('createEnemy', () => {
 
   it('should apply variant multipliers to stats', () => {
     // Mock to always get normal variant
-    vi.spyOn(Math, 'random').mockReturnValue(0.99);
 
     const ratBase = ENEMY_STATS.rat;
     const normalMult = VARIANT_MULTIPLIERS.normal;
-    const enemy = createEnemy('test-id', 'rat', 0, 0, 1);
+    const enemy = createEnemy('test-id', 'rat', 0, 0, 1, randomSource());
 
     expect(enemy.hp).toBe(Math.floor(ratBase.hp * normalMult.hpMult));
     expect(enemy.maxHp).toBe(Math.floor(ratBase.hp * normalMult.hpMult));
@@ -207,17 +210,14 @@ describe('createEnemy', () => {
     expect(enemy.defense).toBe(
       Math.floor(ratBase.defense * normalMult.defenseMult),
     );
-
-    vi.restoreAllMocks();
   });
 
   it('should create elite enemy with correct stats', () => {
     // Mock to get elite variant (roll between championChance and championChance + eliteChance)
-    vi.spyOn(Math, 'random').mockReturnValue(0.05);
 
     const ratBase = ENEMY_STATS.rat;
     const eliteMult = VARIANT_MULTIPLIERS.elite;
-    const enemy = createEnemy('test-id', 'rat', 0, 0, 1);
+    const enemy = createEnemy('test-id', 'rat', 0, 0, 1, randomSource(0.05));
 
     expect(enemy.variant).toBe('elite');
     expect(enemy.hp).toBe(Math.floor(ratBase.hp * eliteMult.hpMult));
@@ -227,114 +227,111 @@ describe('createEnemy', () => {
     expect(enemy.defense).toBe(
       Math.floor(ratBase.defense * eliteMult.defenseMult),
     );
-
-    vi.restoreAllMocks();
   });
 
   it('should format display name correctly', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.99); // Normal
-    const normalEnemy = createEnemy('id1', 'rat', 0, 0, 1);
+    const normalEnemy = createEnemy('id1', 'rat', 0, 0, 1, randomSource());
     expect(normalEnemy.displayName).toBe('Rat');
-    vi.restoreAllMocks();
 
-    vi.spyOn(Math, 'random').mockReturnValue(0.05); // Elite
-    const eliteEnemy = createEnemy('id2', 'orc', 0, 0, 1);
+    const eliteEnemy = createEnemy('id2', 'orc', 0, 0, 1, randomSource(0.05));
     expect(eliteEnemy.displayName).toBe('Elite Orc');
-    vi.restoreAllMocks();
 
-    vi.spyOn(Math, 'random').mockReturnValue(0.01); // Champion
-    const championEnemy = createEnemy('id3', 'dragon', 0, 0, 5);
+    const championEnemy = createEnemy(
+      'id3',
+      'dragon',
+      0,
+      0,
+      5,
+      randomSource(0.01),
+    );
     expect(championEnemy.displayName).toBe('Champion Dragon');
-    vi.restoreAllMocks();
   });
 
   it('should assign correct behavior for rats', () => {
-    const enemy = createEnemy('test-id', 'rat', 0, 0, 1);
+    const enemy = createEnemy('test-id', 'rat', 0, 0, 1, randomSource());
     expect(enemy.behavior).toBe('flee');
   });
 
   it('should assign correct behavior for dragons', () => {
-    const enemy = createEnemy('test-id', 'dragon', 0, 0, 1);
+    const enemy = createEnemy('test-id', 'dragon', 0, 0, 1, randomSource());
     expect(enemy.behavior).toBe('aggressive');
   });
 
   it('should assign aggressive or patrol behavior for skeletons and orcs', () => {
     const validBehaviors = ['aggressive', 'patrol'];
 
-    const skeleton = createEnemy('id1', 'skeleton', 0, 0, 1);
+    const skeleton = createEnemy('id1', 'skeleton', 0, 0, 1, randomSource());
     expect(validBehaviors).toContain(skeleton.behavior);
 
-    const orc = createEnemy('id2', 'orc', 0, 0, 1);
+    const orc = createEnemy('id2', 'orc', 0, 0, 1, randomSource());
     expect(validBehaviors).toContain(orc.behavior);
   });
 
   it('should create champion enemy on higher floors', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.01);
-
-    const enemy = createEnemy('test-id', 'dragon', 0, 0, 10);
+    const enemy = createEnemy(
+      'test-id',
+      'dragon',
+      0,
+      0,
+      10,
+      randomSource(0.01),
+    );
     const championMult = VARIANT_MULTIPLIERS.champion;
     const dragonBase = ENEMY_STATS.dragon;
 
     expect(enemy.variant).toBe('champion');
     expect(enemy.displayName).toBe('Champion Dragon');
     expect(enemy.hp).toBe(Math.floor(dragonBase.hp * championMult.hpMult));
-
-    vi.restoreAllMocks();
   });
 });
 
 describe('getEnemyXpReward', () => {
   it('should return correct XP for normal variant', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.99);
-    const enemy = createEnemy('test-id', 'rat', 0, 0, 1);
+    const enemy = createEnemy('test-id', 'rat', 0, 0, 1, randomSource());
     const xp = getEnemyXpReward(enemy);
 
     const expected = Math.floor(
       ENEMY_STATS.rat.xpReward * VARIANT_MULTIPLIERS.normal.xpMult,
     );
     expect(xp).toBe(expected);
-    vi.restoreAllMocks();
   });
 
   it('should return correct XP for elite variant', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.05);
-    const enemy = createEnemy('test-id', 'skeleton', 0, 0, 1);
+    const enemy = createEnemy(
+      'test-id',
+      'skeleton',
+      0,
+      0,
+      1,
+      randomSource(0.05),
+    );
     const xp = getEnemyXpReward(enemy);
 
     const expected = Math.floor(
       ENEMY_STATS.skeleton.xpReward * VARIANT_MULTIPLIERS.elite.xpMult,
     );
     expect(xp).toBe(expected);
-    vi.restoreAllMocks();
   });
 
   it('should return correct XP for champion variant', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.01);
-    const enemy = createEnemy('test-id', 'orc', 0, 0, 5);
+    const enemy = createEnemy('test-id', 'orc', 0, 0, 5, randomSource(0.01));
     const xp = getEnemyXpReward(enemy);
 
     const expected = Math.floor(
       ENEMY_STATS.orc.xpReward * VARIANT_MULTIPLIERS.champion.xpMult,
     );
     expect(xp).toBe(expected);
-    vi.restoreAllMocks();
   });
 
   it('should scale XP appropriately with variant multipliers', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.99);
-    const normalRat = createEnemy('id1', 'rat', 0, 0, 1);
+    const normalRat = createEnemy('id1', 'rat', 0, 0, 1, randomSource());
     const normalXp = getEnemyXpReward(normalRat);
-    vi.restoreAllMocks();
 
-    vi.spyOn(Math, 'random').mockReturnValue(0.05);
-    const eliteRat = createEnemy('id2', 'rat', 0, 0, 1);
+    const eliteRat = createEnemy('id2', 'rat', 0, 0, 1, randomSource(0.05));
     const eliteXp = getEnemyXpReward(eliteRat);
-    vi.restoreAllMocks();
 
-    vi.spyOn(Math, 'random').mockReturnValue(0.01);
-    const championRat = createEnemy('id3', 'rat', 0, 0, 5);
+    const championRat = createEnemy('id3', 'rat', 0, 0, 5, randomSource(0.01));
     const championXp = getEnemyXpReward(championRat);
-    vi.restoreAllMocks();
 
     expect(eliteXp).toBeGreaterThan(normalXp);
     expect(championXp).toBeGreaterThan(eliteXp);

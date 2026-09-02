@@ -6,7 +6,7 @@ A browser-based dungeon crawler game built with TypeScript, React, Fastify, and 
 
 A full-stack TypeScript game featuring:
 
-- **Real-time WebSocket gameplay** with delta updates (not full state polling)
+- **Authenticated HTTP gameplay actions** with revisioned, idempotent updates
 - **Turn-based dungeon crawler mechanics** with permadeath
 - **Procedurally generated dungeons** using Binary Space Partitioning
 - **Server-authoritative game logic** with anti-cheat (only visible data sent to client)
@@ -65,7 +65,7 @@ pnpm dev:api
 pnpm dev:ui
 ```
 
-The UI will be available at `http://localhost:5173` and connects via WebSocket to the API.
+The UI will be available at `http://localhost:5173` and sends gameplay actions to the HTTP API.
 
 ### Docker
 
@@ -108,13 +108,13 @@ dungeon-crawler/
 │   ├── api/          # Fastify backend (game logic + MongoDB)
 │   │   └── src/
 │   │       ├── index.ts              # Server entry point
-│   │       ├── routes/               # HTTP + WebSocket endpoints
+│   │       ├── routes/               # HTTP endpoints
 │   │       └── services/             # Game logic, map generation, DB
 │   └── ui/           # React frontend (UI + rendering)
 │       └── src/
 │           ├── App.tsx               # Main app controller
 │           ├── components/           # UI components
-│           └── hooks/                # WebSocket client, API client
+│           └── hooks/                # HTTP command and UI hooks
 ├── packages/
 │   └── shared/       # Shared TypeScript types + constants
 └── docs/             # Documentation
@@ -134,7 +134,6 @@ dungeon-crawler/
 ### Backend
 
 - **Fastify** - Fast, low-overhead web framework
-- **@fastify/websocket** - WebSocket support for real-time updates
 - **MongoDB** - Document database for game state and leaderboards
 - **TypeScript** - Type-safe development
 
@@ -153,9 +152,9 @@ dungeon-crawler/
 
 ## Architecture Highlights
 
-### WebSocket + Delta Updates
+### Authenticated HTTP Actions
 
-Instead of sending the full game state (~50KB) on every move, the server sends only **deltas** (~200 bytes):
+Each gameplay request includes a unique action ID and the current game revision. The server durably applies an accepted action once, then returns the authoritative visibility-filtered projection and event deltas:
 
 - Player position changes
 - Enemy movements (only visible enemies)

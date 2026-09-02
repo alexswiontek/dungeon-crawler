@@ -4,15 +4,56 @@
 import type {
   EnemyType,
   EnemyVariant,
+  GameCommand,
   GameState,
-} from '@dungeon-crawler/shared';
+  SeededRandomState,
+} from '@dungeon-crawler/domain';
+import type { GameCommandResult } from '@dungeon-crawler/protocol';
 
 /**
- * Game document structure in MongoDB
- * Extends GameState with MongoDB's _id field
+ * A bounded durable receipt. The full original filtered result is retained so
+ * an accepted retry can be answered without re-running domain code or RNG.
  */
-export interface GameDoc extends Omit<GameState, '_id'> {
+export interface GameActionReceipt {
+  actionId: string;
+  requestFingerprint: string;
+  expectedRevision: number;
+  command: GameCommand;
+  result: GameCommandResult;
+  recordedAt: Date;
+}
+
+export type LeaderboardDelivery =
+  | { status: 'none' }
+  | {
+      status: 'pending' | 'submitted';
+      outcome: {
+        playerName: string;
+        score: number;
+        floor: number;
+        killedBy: string | null;
+        killedByType: EnemyType | null;
+        killedByVariant: EnemyVariant | null;
+        finishedAt: Date;
+      };
+    };
+
+/**
+ * MongoDB persistence envelope. Domain state, wire projection, and persistence
+ * metadata intentionally remain separate types.
+ */
+export interface StoredGameDocument {
   _id: string;
+  sessionTokenHash: string;
+  revision: number;
+  random: {
+    seed: string;
+    state: SeededRandomState;
+  };
+  game: GameState;
+  actionReceipts: GameActionReceipt[];
+  leaderboard: LeaderboardDelivery;
+  updatedAt: Date;
 }
 
 /**
@@ -27,14 +68,4 @@ export interface LeaderboardDoc {
   killedByType: EnemyType | null;
   killedByVariant: EnemyVariant | null;
   createdAt: Date;
-}
-
-/**
- * WebSocket interface for game sessions
- * Minimal interface matching what we need from ws package
- */
-export interface GameWebSocket {
-  readyState: number;
-  send(data: string): void;
-  close(): void;
 }

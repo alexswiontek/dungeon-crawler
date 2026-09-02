@@ -1,8 +1,8 @@
 import 'dotenv/config';
+import { GAMEPLAY_PROTOCOL_HEADER } from '@dungeon-crawler/protocol';
 import cors, { type FastifyCorsOptions } from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
-import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import {
   serializerCompiler,
@@ -17,9 +17,9 @@ import {
   isDatabaseHealthy,
 } from '@/services/database.js';
 import {
-  cleanupAllSessions,
-  startCleanupInterval,
-} from '@/services/gameSessionManager.js';
+  startLeaderboardReconciliation,
+  stopLeaderboardReconciliation,
+} from '@/services/gameCommandService.js';
 import {
   RATE_LIMIT_MAX_REQUESTS,
   RATE_LIMIT_TIME_WINDOW,
@@ -67,6 +67,7 @@ fastify.setSerializerCompiler(serializerCompiler);
 await fastify.register(cors, {
   delegator: (req, cb) => {
     const corsOptions: FastifyCorsOptions = {
+      exposedHeaders: [GAMEPLAY_PROTOCOL_HEADER],
       origin: (
         origin: string | undefined,
         callback: (err: Error | null, origin: string | boolean) => void,
@@ -114,10 +115,8 @@ await fastify.register(rateLimit, {
   timeWindow: RATE_LIMIT_TIME_WINDOW,
 });
 
-await fastify.register(websocket);
-
 // Register routes
-await fastify.register(gameRoutes, { prefix: '/game' });
+await fastify.register(gameRoutes);
 await fastify.register(leaderboardRoutes, { prefix: '/leaderboard' });
 
 // Health check
@@ -151,8 +150,7 @@ const start = async () => {
     await fastify.listen({ port: PORT, host: '0.0.0.0' });
     fastify.log.info(`Server listening on http://0.0.0.0:${PORT}`);
 
-    // Start cleanup interval for stale sessions
-    startCleanupInterval();
+    startLeaderboardReconciliation();
     fastify.log.info(`CORS enabled for origins: ${ALLOWED_ORIGINS.join(', ')}`);
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
@@ -165,9 +163,7 @@ const start = async () => {
 
 // Graceful shutdown
 const shutdown = async () => {
-  // Clean up game sessions first
-  await cleanupAllSessions();
-  // Then close database
+  stopLeaderboardReconciliation();
   await closeDatabase();
   await fastify.close();
   process.exit(0);

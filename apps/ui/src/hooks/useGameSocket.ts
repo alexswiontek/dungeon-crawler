@@ -1,10 +1,8 @@
-import type {
-  ClientMessage,
-  Direction,
-  GameDelta,
-  GameEvent,
-  ServerMessage,
-} from '@dungeon-crawler/shared';
+import type { Direction, GameEvent } from '@dungeon-crawler/domain';
+import {
+  type ClientMessage,
+  ServerMessageSchema,
+} from '@dungeon-crawler/protocol';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { GameState } from '@/engine/GameState';
 import { useGameStore } from '@/stores/gameStore';
@@ -31,7 +29,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const MAX_RECONNECT_DELAY = 30000; // 30 seconds
 const MOVE_THROTTLE_MS = 80; // ~12 moves/sec max - prevents keyboard repeat flooding
 const ATTACK_COOLDOWN_MS = 400; // 400ms cooldown for ranged attacks - forces strategic usage
-const MAX_PENDING_MESSAGES = 3; // Max unacknowledged messages in flight
+const MAX_PENDING_MESSAGES = 1; // Commands are revisioned; keep one turn in flight
 
 // Singleton mutable game state - shared across hook instances
 // This is the key performance optimization: state mutations don't trigger React
@@ -99,7 +97,10 @@ function notifyListeners(): void {
   }
 }
 
-export function useGameSocket(gameId: string): UseGameSocketResult {
+export function useGameSocket(
+  gameId: string,
+  sessionToken: string,
+): UseGameSocketResult {
   // UI state from Zustand - select only what we need
   const events = useGameStore((s) => s.events);
   const connected = useGameStore((s) => s.connected);
@@ -140,6 +141,7 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
   const lastMoveTimeRef = useRef(0);
   const lastAttackTimeRef = useRef(0);
   const pendingMessagesRef = useRef(0);
+  const revisionRef = useRef(0);
   const pendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Connection effect
@@ -163,6 +165,7 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
     manualCloseRef.current = false;
     reconnectAttemptRef.current = 0;
     pendingMessagesRef.current = 0;
+    revisionRef.current = 0;
 
     const getWsUrl = () => {
       const apiUrl = import.meta.env.VITE_API_URL;
@@ -183,25 +186,31 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        actions.setConnected(true);
-        actions.setReconnecting(false);
-        actions.setReconnectAttempt(0);
-        reconnectAttemptRef.current = 0;
         pendingMessagesRef.current = 0;
         actions.setError(null);
+        const authentication: ClientMessage = {
+          type: 'authenticate',
+          sessionToken,
+        };
+        ws.send(JSON.stringify(authentication));
       };
 
       ws.onmessage = (event) => {
         if (wsRef.current !== ws) return;
 
         try {
-          const message: ServerMessage = JSON.parse(event.data);
+          const message = ServerMessageSchema.parse(JSON.parse(event.data));
           if (wsRef.current !== ws) return;
 
           switch (message.type) {
             case 'init':
               // Initialize mutable game state
+              revisionRef.current = message.revision;
               globalGameState.initFromVisible(message.state);
+              actions.setConnected(true);
+              actions.setReconnecting(false);
+              actions.setReconnectAttempt(0);
+              reconnectAttemptRef.current = 0;
               notifyListeners();
               break;
 
@@ -221,15 +230,7 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
               actions.setHasPendingMessages(false);
 
               // Extract events using type guard
-              const isEventDelta = (
-                d: GameDelta,
-              ): d is { type: 'event'; event: GameEvent } => {
-                return d.type === 'event' && 'event' in d;
-              };
-
-              const newEvents = message.deltas
-                .filter(isEventDelta)
-                .map((d) => d.event);
+              const newEvents = message.result.events as unknown as GameEvent[];
 
               if (newEvents.length > 0) {
                 actions.addEvents(newEvents);
@@ -237,7 +238,7 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
 
               // Track damaged entities for flash effect
               const newlyDamaged = new Set<string>();
-              for (const delta of message.deltas) {
+              for (const delta of message.result.deltas) {
                 if (delta.type === 'enemy_damaged') {
                   newlyDamaged.add(delta.enemyId);
                 }
@@ -259,13 +260,16 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
                 }, 400);
               }
 
-              // Apply deltas to mutable game state (no React re-render!)
-              globalGameState.applyDeltas(message.deltas);
+              revisionRef.current = message.result.revision;
+              // The authoritative filtered snapshot prevents delta drift while
+              // retained deltas continue to drive effects and notifications.
+              globalGameState.initFromVisible(message.result.state);
               notifyListeners();
               break;
             }
 
             case 'enemy_tick': {
+              revisionRef.current = message.revision;
               // Real-time enemy movement - apply directly to mutable state
               globalGameState.applyDeltas(message.deltas);
               // No notifyListeners() - we don't need React re-render for enemy ticks
@@ -275,11 +279,29 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
             case 'error':
               actions.setError(message.message);
 
+              if (message.actionId && pendingMessagesRef.current > 0) {
+                pendingMessagesRef.current--;
+                actions.setHasPendingMessages(false);
+              }
+              if (message.state && message.revision !== undefined) {
+                revisionRef.current = message.revision;
+                globalGameState.initFromVisible(message.state);
+                notifyListeners();
+              }
+
               // If server tells us to reconnect, close the socket to trigger reconnection
               if (
+                message.code === 'UNAUTHORIZED' ||
+                message.code === 'GAME_NOT_FOUND' ||
                 message.message.includes('reconnect') ||
                 message.message.includes('progress')
               ) {
+                if (
+                  message.code === 'UNAUTHORIZED' ||
+                  message.code === 'GAME_NOT_FOUND'
+                ) {
+                  manualCloseRef.current = true;
+                }
                 ws.close();
               }
               break;
@@ -345,7 +367,7 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
         wsRef.current = null;
       }
     };
-  }, [gameId]);
+  }, [gameId, sessionToken]);
 
   // Stop reconnecting if game ends
   // biome-ignore lint/correctness/useExhaustiveDependencies: globalGameState is mutable and intentionally not in deps - hasPlayer change triggers effect to check status
@@ -391,7 +413,12 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       pendingMessagesRef.current++;
-      const message: ClientMessage = { type: 'move', direction };
+      const message: ClientMessage = {
+        type: 'command',
+        actionId: crypto.randomUUID(),
+        expectedRevision: revisionRef.current,
+        command: { type: 'move', direction },
+      };
       wsRef.current.send(JSON.stringify(message));
 
       // Set pending state and timeout to show loading after 500ms
@@ -413,7 +440,12 @@ export function useGameSocket(gameId: string): UseGameSocketResult {
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       pendingMessagesRef.current++;
-      const message: ClientMessage = { type: 'attack' };
+      const message: ClientMessage = {
+        type: 'command',
+        actionId: crypto.randomUUID(),
+        expectedRevision: revisionRef.current,
+        command: { type: 'attack' },
+      };
       wsRef.current.send(JSON.stringify(message));
     }
   };

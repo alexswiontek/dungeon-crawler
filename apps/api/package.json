@@ -9,15 +9,17 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:integration": "RUN_MONGODB_INTEGRATION=1 vitest run src/services/gameCommandService.mongodb.test.ts",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@dungeon-crawler/domain": "workspace:*",
+    "@dungeon-crawler/protocol": "workspace:*",
     "@dungeon-crawler/shared": "workspace:*",
     "@fastify/cors": "^11.2.0",
     "@fastify/helmet": "^13.0.2",
     "@fastify/rate-limit": "^10.3.0",
-    "@fastify/websocket": "^11.2.0",
     "dotenv": "^17.2.3",
     "fastify": "^5.6.2",
     "fastify-type-provider-zod": "^6.1.0",

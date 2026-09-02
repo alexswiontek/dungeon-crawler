@@ -38,6 +38,15 @@ export async function connectToDatabase(): Promise<Db> {
         { updatedAt: 1 },
         { expireAfterSeconds: GAME_TTL_SECONDS, background: true },
       );
+    // Enforce action identity across all retained per-game receipts. Receipts
+    // are bounded by the command service, so IDs are guaranteed unique during
+    // the documented retry window rather than retained forever.
+    await db
+      .collection('games')
+      .createIndex(
+        { 'actionReceipts.actionId': 1 },
+        { unique: true, sparse: true, background: true },
+      );
 
     // Create indexes for leaderboard queries
     logger.info('Creating database indexes...');

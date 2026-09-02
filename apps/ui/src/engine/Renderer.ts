@@ -7,7 +7,10 @@ import {
   MAP_WIDTH,
 } from '@dungeon-crawler/shared';
 import type { AssetManagerClass, SpriteSheetKey } from '@/engine/AssetManager';
-import type { GameState } from '@/engine/GameState';
+import type {
+  GameClientModel,
+  GameClientSnapshot,
+} from '@/game/GameClientModel';
 import {
   CHARACTER_SPRITES,
   ENEMY_SPRITE_MAPPING,
@@ -40,7 +43,7 @@ export interface RendererConfig {
 export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private assets: AssetManagerClass;
-  private state: GameState;
+  private model: GameClientModel;
   private rafId = 0;
   private running = false;
 
@@ -62,7 +65,7 @@ export class Renderer {
   constructor(
     canvas: HTMLCanvasElement,
     assets: AssetManagerClass,
-    state: GameState,
+    model: GameClientModel,
   ) {
     const ctx = canvas.getContext('2d');
     if (!ctx) {
@@ -70,7 +73,7 @@ export class Renderer {
     }
     this.ctx = ctx;
     this.assets = assets;
-    this.state = state;
+    this.model = model;
 
     // Disable image smoothing for crisp pixel art
     this.ctx.imageSmoothingEnabled = false;
@@ -131,8 +134,6 @@ export class Renderer {
   };
 
   private render(): void {
-    if (!this.state.player) return;
-
     // Update camera to center on player
     this.updateCamera();
 
@@ -156,6 +157,10 @@ export class Renderer {
 
     // Draw player
     this.drawPlayer();
+  }
+
+  private get state(): GameClientSnapshot {
+    return this.model.getSnapshot();
   }
 
   private updateCamera(): void {
@@ -191,8 +196,8 @@ export class Renderer {
         const screenX = (x - this.cameraX) * TILE_SIZE;
         const screenY = (y - this.cameraY) * TILE_SIZE;
 
-        // Check fog
-        const inFog = !this.state.fog[y]?.[x];
+        // Explored terrain persists after it leaves current visibility.
+        const inFog = !this.state.explored[y]?.[x];
         if (inFog) {
           this.drawSprite('tiles', TILE_SPRITES.fog, screenX, screenY);
           continue;
@@ -214,8 +219,7 @@ export class Renderer {
       // Skip if not in viewport
       if (!this.isInViewport(item.x, item.y)) continue;
 
-      // Skip if in fog
-      if (!this.state.fog[item.y]?.[item.x]) continue;
+      if (!this.state.visibleNow[item.y]?.[item.x]) continue;
 
       const screenX = (item.x - this.cameraX) * TILE_SIZE;
       const screenY = (item.y - this.cameraY) * TILE_SIZE;
@@ -233,8 +237,7 @@ export class Renderer {
       // Skip if not in viewport
       if (!this.isInViewport(enemy.x, enemy.y)) continue;
 
-      // Skip if in fog
-      if (!this.state.fog[enemy.y]?.[enemy.x]) continue;
+      if (!this.state.visibleNow[enemy.y]?.[enemy.x]) continue;
 
       // Skip dead enemies
       if (enemy.hp <= 0) continue;

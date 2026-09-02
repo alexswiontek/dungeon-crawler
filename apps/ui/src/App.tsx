@@ -1,209 +1,233 @@
-import type { CharacterType } from '@dungeon-crawler/shared';
-import { useEffect, useState } from 'react';
-import { z } from 'zod';
-import { api } from '@/api';
+import type { CharacterType } from '@dungeon-crawler/domain';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DeathScreen } from '@/components/DeathScreen';
 import { Game } from '@/components/Game';
 import { Leaderboard } from '@/components/Leaderboard';
 import { StartScreen } from '@/components/StartScreen';
-import type { GameState } from '@/engine/GameState';
-import { safeLocalStorage } from '@/utils/storage';
+import type { GameClientSnapshot } from '@/game/GameClientModel';
+import { GameGateway } from '@/game/GameGateway';
+import { GameHttpClient } from '@/game/GameHttpClient';
+import { GameSessionStorage } from '@/game/GameSessionStorage';
 
-type Screen = 'start' | 'game' | 'dead' | 'won' | 'leaderboard';
-
-const STORAGE_KEY = 'dungeon_crawler_active_game';
-const GAME_TTL_MS = 60 * 60 * 1000; // 1 hour
-
-const SavedGameSchema = z.object({
-  gameId: z.string(),
-  playerName: z.string(),
-  character: z.enum(['dwarf', 'elf', 'bandit', 'wizard']).optional(),
-  savedAt: z.number(),
-});
+type AppLifecycle =
+  | { readonly kind: 'restoring' }
+  | { readonly kind: 'start'; readonly message: string | null }
+  | { readonly kind: 'creating' }
+  | {
+      readonly kind: 'restore-failed';
+      readonly gateway: GameGateway;
+      readonly message: string;
+    }
+  | { readonly kind: 'game'; readonly gateway: GameGateway }
+  | {
+      readonly kind: 'terminal';
+      readonly state: GameClientSnapshot;
+      readonly won: boolean;
+    }
+  | { readonly kind: 'protocol-mismatch'; readonly message: string }
+  | { readonly kind: 'leaderboard' };
 
 function Title() {
   return <h1 className="mb-5">Dungeon Crawler</h1>;
 }
 
 function App() {
-  const [screen, setScreen] = useState<Screen>('start');
-  const [gameId, setGameId] = useState<string | null>(null);
-  const [playerName, setPlayerName] = useState<string>('');
+  const storage = useMemo(
+    () => new GameSessionStorage({ storage: localStorage }),
+    [],
+  );
+  const transport = useMemo(() => new GameHttpClient(), []);
+  const [lifecycle, setLifecycle] = useState<AppLifecycle>({
+    kind: 'restoring',
+  });
+  const [playerName, setPlayerName] = useState('');
   const [character, setCharacter] = useState<CharacterType>('dwarf');
-  const [finalState, setFinalState] = useState<GameState | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isRestoring, setIsRestoring] = useState(true);
-  const [isStartingGame, setIsStartingGame] = useState(false);
 
-  // Check for saved game on mount
-  useEffect(() => {
-    const checkSavedGame = async () => {
+  const restoreGateway = useCallback(
+    async (gateway: GameGateway): Promise<void> => {
+      setLifecycle({ kind: 'restoring' });
       try {
-        const saved = safeLocalStorage.getItem(STORAGE_KEY);
-        if (!saved) {
-          setIsRestoring(false);
-          return;
-        }
-
-        const parsed = SavedGameSchema.safeParse(JSON.parse(saved));
-        if (!parsed.success) {
-          safeLocalStorage.removeItem(STORAGE_KEY);
-          setIsRestoring(false);
-          return;
-        }
-
-        const {
-          gameId: savedGameId,
-          playerName: savedName,
-          character: savedCharacter,
-          savedAt,
-        } = parsed.data;
-
-        // Always preserve the player name and character for convenience
-        if (savedName) {
-          setPlayerName(savedName);
-        }
-        if (savedCharacter) {
-          setCharacter(savedCharacter);
-        }
-
-        // Check TTL - expire after 1 hour
-        if (Date.now() - savedAt > GAME_TTL_MS) {
-          safeLocalStorage.removeItem(STORAGE_KEY);
-          setIsRestoring(false);
-          return;
-        }
-
-        // Check if game is still active
-        const response = await api.getGame(savedGameId);
-        if (response.state.status === 'active') {
-          setGameId(savedGameId);
-          setScreen('game');
+        const result = await gateway.loadGame();
+        const status = result.model.getSnapshot().status;
+        if (status === 'dead' || status === 'won') {
+          setLifecycle({
+            kind: 'terminal',
+            state: result.model.getSnapshot(),
+            won: status === 'won',
+          });
         } else {
-          // Game is no longer active, clear storage (name already preserved)
-          safeLocalStorage.removeItem(STORAGE_KEY);
+          setLifecycle({ kind: 'game', gateway });
         }
       } catch {
-        // Game not found or error, clear storage (name already preserved)
-        safeLocalStorage.removeItem(STORAGE_KEY);
-      } finally {
-        setIsRestoring(false);
+        const gatewayLifecycle = gateway.getSnapshot().lifecycle;
+        if (gatewayLifecycle.kind === 'session-invalid') {
+          setLifecycle({ kind: 'start', message: gatewayLifecycle.message });
+        } else if (gatewayLifecycle.kind === 'protocol-mismatch') {
+          setLifecycle({
+            kind: 'protocol-mismatch',
+            message: gatewayLifecycle.message,
+          });
+        } else {
+          setLifecycle({
+            kind: 'restore-failed',
+            gateway,
+            message:
+              gatewayLifecycle.kind === 'load-failed'
+                ? gatewayLifecycle.message
+                : 'The saved game could not be loaded. Retry the saved session.',
+          });
+        }
       }
-    };
+    },
+    [],
+  );
 
-    checkSavedGame();
-  }, []);
+  useEffect(() => {
+    const preferences = storage.loadPreferences();
+    if (preferences) {
+      setPlayerName(preferences.playerName);
+      setCharacter(preferences.character);
+    }
+
+    const credential = storage.loadActiveGame();
+    if (!credential) {
+      setLifecycle({ kind: 'start', message: null });
+      return;
+    }
+    const gateway = new GameGateway({ transport, storage, credential });
+    void restoreGateway(gateway);
+  }, [restoreGateway, storage, transport]);
 
   const handleStartGame = async (
     name: string,
     selectedCharacter: CharacterType,
-  ) => {
-    setIsStartingGame(true);
+  ): Promise<void> => {
+    if (lifecycle.kind === 'creating') return;
+    setPlayerName(name);
+    setCharacter(selectedCharacter);
+    storage.savePreferences({
+      playerName: name,
+      character: selectedCharacter,
+    });
+    setLifecycle({ kind: 'creating' });
+    const gateway = new GameGateway({ transport, storage });
     try {
-      setError(null);
-      setPlayerName(name);
-      setCharacter(selectedCharacter);
-      const response = await api.createGame(name, selectedCharacter);
-      setGameId(response.gameId);
-      // Save to localStorage for auto-resume
-      safeLocalStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          gameId: response.gameId,
-          playerName: name,
-          character: selectedCharacter,
-          savedAt: Date.now(),
-        }),
-      );
-      setScreen('game');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start game');
-    } finally {
-      setIsStartingGame(false);
+      await gateway.createGame({
+        playerName: name,
+        character: selectedCharacter,
+      });
+      setLifecycle({ kind: 'game', gateway });
+    } catch {
+      const gatewayLifecycle = gateway.getSnapshot().lifecycle;
+      if (gatewayLifecycle.kind === 'protocol-mismatch') {
+        setLifecycle({
+          kind: 'protocol-mismatch',
+          message: gatewayLifecycle.message,
+        });
+      } else {
+        setLifecycle({
+          kind: 'start',
+          message:
+            gatewayLifecycle.kind === 'create-failed'
+              ? gatewayLifecycle.message
+              : 'The game could not be created. Try again.',
+        });
+      }
     }
   };
 
-  const handlePlayAgainWithName = async () => {
-    if (playerName) {
-      await handleStartGame(playerName, character);
-    }
+  const handleSessionInvalid = (message: string): void => {
+    setLifecycle({ kind: 'start', message });
   };
 
-  const handleRestart = () => {
-    // Clear old game from storage
-    safeLocalStorage.removeItem(STORAGE_KEY);
-    // Go back to start screen with name preserved (allows character change)
-    setGameId(null);
-    setFinalState(null);
-    setScreen('start');
+  const handleBackToStart = (): void => {
+    setLifecycle({ kind: 'start', message: null });
   };
 
-  const handleGameEnd = (state: GameState, won: boolean) => {
-    // Clear saved game since it's over
-    safeLocalStorage.removeItem(STORAGE_KEY);
-    setFinalState(state);
-    setScreen(won ? 'won' : 'dead');
-  };
-
-  const handleBackToStart = () => {
-    setGameId(null);
-    setFinalState(null);
-    setScreen('start');
-  };
-
-  const handleShowLeaderboard = () => {
-    setScreen('leaderboard');
-  };
-
-  // Show loading while checking for saved game
-  if (isRestoring) {
+  if (lifecycle.kind === 'restoring') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-5">
         <Title />
-        <p className="text-gray-500">Loading...</p>
+        <p className="text-gray-500">Loading saved game...</p>
       </div>
     );
   }
 
-  // Game screen uses its own full-screen layout
-  if (screen === 'game' && gameId) {
+  if (lifecycle.kind === 'game') {
     return (
       <Game
-        key={gameId}
-        gameId={gameId}
-        onGameEnd={handleGameEnd}
-        onRestart={handleRestart}
+        gateway={lifecycle.gateway}
+        onGameEnd={(state, won) =>
+          setLifecycle({ kind: 'terminal', state, won })
+        }
+        onSessionInvalid={handleSessionInvalid}
+        onAbandoned={handleBackToStart}
       />
     );
   }
 
-  // Non-game screens use centered layout with title
+  if (lifecycle.kind === 'protocol-mismatch') {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-5 text-center">
+        <Title />
+        <h2 className="text-accent">Reload required</h2>
+        <p className="text-gray-400 mt-3">{lifecycle.message}</p>
+        <button
+          type="button"
+          className="mt-5"
+          onClick={() => window.location.reload()}
+        >
+          Reload Game
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col items-center p-5">
       <Title />
 
-      {screen === 'start' && (
+      {(lifecycle.kind === 'start' || lifecycle.kind === 'creating') && (
         <StartScreen
           initialName={playerName}
+          initialCharacter={character}
           onStart={handleStartGame}
-          onShowLeaderboard={handleShowLeaderboard}
-          error={error}
-          isLoading={isStartingGame}
+          onShowLeaderboard={() => setLifecycle({ kind: 'leaderboard' })}
+          error={lifecycle.kind === 'start' ? lifecycle.message : null}
+          isLoading={lifecycle.kind === 'creating'}
         />
       )}
 
-      {(screen === 'dead' || screen === 'won') && finalState && (
+      {lifecycle.kind === 'restore-failed' && (
+        <div role="alert" className="text-center">
+          <h2 className="text-accent">Saved game unavailable</h2>
+          <p className="text-gray-400 mt-3">{lifecycle.message}</p>
+          <button
+            type="button"
+            className="mt-5"
+            onClick={() => void restoreGateway(lifecycle.gateway)}
+          >
+            Retry Load
+          </button>
+        </div>
+      )}
+
+      {lifecycle.kind === 'terminal' && (
         <DeathScreen
-          gameState={finalState}
-          won={screen === 'won'}
+          gameState={lifecycle.state}
+          won={lifecycle.won}
           playerName={playerName}
-          onPlayAgainWithName={handlePlayAgainWithName}
+          onPlayAgainWithName={() =>
+            void handleStartGame(playerName, character)
+          }
           onChangeName={handleBackToStart}
-          onShowLeaderboard={handleShowLeaderboard}
+          onShowLeaderboard={() => setLifecycle({ kind: 'leaderboard' })}
         />
       )}
 
-      {screen === 'leaderboard' && <Leaderboard onBack={handleBackToStart} />}
+      {lifecycle.kind === 'leaderboard' && (
+        <Leaderboard onBack={handleBackToStart} />
+      )}
     </div>
   );
 }

@@ -75,12 +75,14 @@ function CharacterStatsDisplay({
 
 export function StartScreen({
   initialName = '',
+  initialCharacter = 'dwarf',
   onStart,
   onShowLeaderboard,
   error,
   isLoading = false,
 }: {
   initialName?: string;
+  initialCharacter?: CharacterType;
   onStart: (playerName: string, character: CharacterType) => void;
   onShowLeaderboard: () => void;
   error?: string | null;
@@ -88,7 +90,7 @@ export function StartScreen({
 }) {
   const [playerName, setPlayerName] = useState(initialName);
   const [selectedCharacter, setSelectedCharacter] =
-    useState<CharacterType>('dwarf');
+    useState<CharacterType>(initialCharacter);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

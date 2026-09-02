@@ -78,7 +78,8 @@ export function Grid({
   tileScale = 1,
   damagedEntities = [],
 }: GridProps) {
-  const { map, player, enemies, items, fog, floor } = gameState;
+  const { map, player, enemies, items, explored, visibleNow, floor } =
+    gameState;
 
   // Early return if no player (safety check)
   if (!player) return null;
@@ -92,7 +93,7 @@ export function Grid({
   const endY = Math.min(cameraY + tilesY, MAP_HEIGHT);
 
   const renderCell = (x: number, y: number) => {
-    const inFog = !fog[y]?.[x];
+    const inFog = !explored[y]?.[x];
 
     // If in fog, just render the fog tile
     if (inFog) {
@@ -130,7 +131,12 @@ export function Grid({
     } else {
       // Check for enemies
       for (const enemy of enemies.values()) {
-        if (enemy.x === x && enemy.y === y && enemy.hp > 0) {
+        if (
+          enemy.x === x &&
+          enemy.y === y &&
+          enemy.hp > 0 &&
+          visibleNow[y]?.[x]
+        ) {
           // Validate enemy type with type guard
           if (!isValidEnemyType(enemy.type)) {
             console.warn(`Unknown enemy type: ${enemy.type}`);
@@ -162,7 +168,7 @@ export function Grid({
       // Check for items
       if (!entitySprite) {
         for (const item of items.values()) {
-          if (item.x === x && item.y === y) {
+          if (item.x === x && item.y === y && visibleNow[y]?.[x]) {
             const slot = isEquipmentItem(item)
               ? item.equipment.slot
               : undefined;

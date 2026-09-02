@@ -3,20 +3,20 @@ import type {
   Enemy,
   Equipment,
   FacingDirection,
-  GameDelta,
   GameEvent,
   GameStatus,
   Item,
   Tile,
-  VisibleGameState,
-} from '@dungeon-crawler/shared';
-import { MAP_HEIGHT, MAP_WIDTH } from '@dungeon-crawler/shared';
+} from '@dungeon-crawler/domain';
+import { MAP_HEIGHT, MAP_WIDTH } from '@dungeon-crawler/domain';
+import type { GameDelta, VisibleGameState } from '@dungeon-crawler/protocol';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 // Local state that the frontend maintains
 export interface LocalGameState {
   _id: string;
+  revision: number;
   playerName: string;
   floor: number;
   player: {
@@ -42,7 +42,8 @@ export interface LocalGameState {
   map: (Tile | null)[][];
   enemies: Map<string, Enemy>;
   items: Map<string, Item>;
-  fog: boolean[][];
+  explored: boolean[][];
+  visibleNow: boolean[][];
   status: GameStatus;
   score: number;
 }
@@ -77,13 +78,15 @@ function initializeFromVisible(visible: VisibleGameState): LocalGameState {
 
   return {
     _id: visible._id,
+    revision: visible.revision,
     playerName: visible.playerName,
     floor: visible.floor,
     player: visible.player,
     map,
     enemies,
     items,
-    fog: visible.fog,
+    explored: visible.explored,
+    visibleNow: visible.visibleNow,
     status: visible.status,
     score: visible.score,
   };
@@ -179,14 +182,20 @@ function applyDelta(state: LocalGameState, delta: GameDelta): LocalGameState {
     }
 
     case 'fog_reveal': {
-      const newFog = state.fog.map((row) => [...row]);
+      const explored = state.explored.map((row) => [...row]);
       for (const [x, y] of delta.cells) {
-        if (y >= 0 && y < newFog.length && x >= 0 && x < newFog[0].length) {
-          newFog[y][x] = true;
+        if (y >= 0 && y < explored.length && x >= 0 && x < explored[0].length) {
+          explored[y][x] = true;
         }
       }
-      return { ...state, fog: newFog };
+      return { ...state, explored };
     }
+
+    case 'visibility':
+      return {
+        ...state,
+        visibleNow: delta.visibleNow.map((row) => [...row]),
+      };
 
     case 'tiles_reveal': {
       const newMap = state.map.map((row) => [...row]);
@@ -217,12 +226,7 @@ interface GameStore {
   state: LocalGameState | null;
   events: GameEvent[];
 
-  // Connection state
-  connected: boolean;
-  reconnecting: boolean;
-  reconnectAttempt: number;
   error: string | null;
-  hasPendingMessages: boolean;
 
   // UI state - use array instead of Set to avoid reference equality issues
   damagedEntities: string[];
@@ -231,11 +235,7 @@ interface GameStore {
   initState: (visible: VisibleGameState) => void;
   applyDeltas: (deltas: GameDelta[]) => void;
   addEvents: (newEvents: GameEvent[]) => void;
-  setConnected: (connected: boolean) => void;
-  setReconnecting: (reconnecting: boolean) => void;
-  setReconnectAttempt: (attempt: number) => void;
   setError: (error: string | null) => void;
-  setHasPendingMessages: (pending: boolean) => void;
   setDamagedEntities: (entities: string[]) => void;
   reset: () => void;
 }
@@ -245,11 +245,7 @@ export const useGameStore = create<GameStore>()(
     // Initial state
     state: null,
     events: [],
-    connected: false,
-    reconnecting: false,
-    reconnectAttempt: 0,
     error: null,
-    hasPendingMessages: false,
     damagedEntities: [],
 
     // Actions
@@ -274,13 +270,7 @@ export const useGameStore = create<GameStore>()(
       }));
     },
 
-    setConnected: (connected: boolean): void => set({ connected }),
-    setReconnecting: (reconnecting: boolean): void => set({ reconnecting }),
-    setReconnectAttempt: (reconnectAttempt: number): void =>
-      set({ reconnectAttempt }),
     setError: (error: string | null): void => set({ error }),
-    setHasPendingMessages: (hasPendingMessages: boolean): void =>
-      set({ hasPendingMessages }),
     setDamagedEntities: (damagedEntities: string[]): void =>
       set({ damagedEntities }),
 
@@ -288,15 +278,11 @@ export const useGameStore = create<GameStore>()(
       set({
         state: null,
         events: [],
-        connected: false,
-        reconnecting: false,
-        reconnectAttempt: 0,
         error: null,
-        hasPendingMessages: false,
         damagedEntities: [],
       }),
   })),
 );
 
-// Export the applyDelta function for use in useGameSocket if needed
+// Export reducers for focused state tests and narrow adapters.
 export { applyDelta, initializeFromVisible };

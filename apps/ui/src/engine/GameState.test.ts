@@ -37,10 +37,12 @@ describe('GameState', () => {
       expect(constructedState.map[MAP_HEIGHT - 1][MAP_WIDTH - 1]).toBeNull();
 
       // Fog
-      expect(constructedState.fog).toHaveLength(MAP_HEIGHT);
-      expect(constructedState.fog[0]).toHaveLength(MAP_WIDTH);
-      expect(constructedState.fog[0][0]).toBe(false);
-      expect(constructedState.fog[MAP_HEIGHT - 1][MAP_WIDTH - 1]).toBe(false);
+      expect(constructedState.explored).toHaveLength(MAP_HEIGHT);
+      expect(constructedState.explored[0]).toHaveLength(MAP_WIDTH);
+      expect(constructedState.explored[0][0]).toBe(false);
+      expect(constructedState.explored[MAP_HEIGHT - 1][MAP_WIDTH - 1]).toBe(
+        false,
+      );
 
       // Enemies and items
       expect(constructedState.enemies).toBeInstanceOf(Map);
@@ -74,16 +76,16 @@ describe('GameState', () => {
     it('should create copies (not references) of player and fog', () => {
       const visible = StoreHelpers.visibleGameState();
       const originalPlayer = visible.player;
-      const originalFog = visible.fog;
+      const originalFog = visible.explored;
 
       gameState.initFromVisible(visible);
 
       // Should not be the same references
       expect(gameState.player).not.toBe(originalPlayer);
       expect(gameState.player).toEqual(originalPlayer);
-      expect(gameState.fog).not.toBe(originalFog);
-      expect(gameState.fog[0]).not.toBe(originalFog[0]);
-      expect(gameState.fog).toEqual(originalFog);
+      expect(gameState.explored).not.toBe(originalFog);
+      expect(gameState.explored[0]).not.toBe(originalFog[0]);
+      expect(gameState.explored).toEqual(originalFog);
     });
 
     it('should populate map, enemies, and items from visible arrays', () => {
@@ -412,7 +414,7 @@ describe('GameState', () => {
 
   describe('applyDelta - Map and fog deltas', () => {
     it('should apply fog_reveal delta', () => {
-      const fogRef = gameState.fog;
+      const fogRef = gameState.explored;
       const delta = StoreHelpers.delta.fogReveal([
         [5, 5],
         [10, 10],
@@ -421,11 +423,11 @@ describe('GameState', () => {
 
       gameState.applyDelta(delta);
 
-      expect(gameState.fog).toBe(fogRef); // Same reference (mutation)
-      expect(gameState.fog[5][5]).toBe(true);
-      expect(gameState.fog[10][10]).toBe(true);
-      expect(gameState.fog[15][15]).toBe(true);
-      expect(gameState.fog[0][0]).toBe(false);
+      expect(gameState.explored).toBe(fogRef); // Same reference (mutation)
+      expect(gameState.explored[5][5]).toBe(true);
+      expect(gameState.explored[10][10]).toBe(true);
+      expect(gameState.explored[15][15]).toBe(true);
+      expect(gameState.explored[0][0]).toBe(false);
     });
 
     it('should handle out-of-bounds fog cells gracefully', () => {
@@ -436,8 +438,22 @@ describe('GameState', () => {
       ]);
 
       expect(() => gameState.applyDelta(delta)).not.toThrow();
-      expect(gameState.fog[5][5]).toBe(true);
-      expect(gameState.fog[0][0]).toBe(false);
+      expect(gameState.explored[5][5]).toBe(true);
+      expect(gameState.explored[0][0]).toBe(false);
+    });
+
+    it('should replace current visibility without changing explored terrain', () => {
+      const explored = gameState.explored;
+      const visibleNow = Array.from({ length: MAP_HEIGHT }, () =>
+        Array.from({ length: MAP_WIDTH }, () => false),
+      );
+      visibleNow[7][8] = true;
+
+      gameState.applyDelta(StoreHelpers.delta.visibility(visibleNow));
+
+      expect(gameState.explored).toBe(explored);
+      expect(gameState.visibleNow).not.toBe(visibleNow);
+      expect(gameState.visibleNow[7][8]).toBe(true);
     });
 
     it('should apply tiles_reveal delta', () => {
@@ -609,7 +625,7 @@ describe('GameState', () => {
     it('should maintain mutation behavior across multiple deltas', () => {
       const playerRef = gameState.player;
       const mapRef = gameState.map;
-      const fogRef = gameState.fog;
+      const fogRef = gameState.explored;
 
       const deltas = [
         StoreHelpers.delta.playerPos(10, 15),
@@ -624,7 +640,7 @@ describe('GameState', () => {
       // References should remain the same (in-place mutations)
       expect(gameState.player).toBe(playerRef);
       expect(gameState.map).toBe(mapRef);
-      expect(gameState.fog).toBe(fogRef);
+      expect(gameState.explored).toBe(fogRef);
     });
   });
 
@@ -655,18 +671,18 @@ describe('GameState', () => {
 
     it('should clear collections and create new arrays', () => {
       const oldMap = gameState.map;
-      const oldFog = gameState.fog;
+      const oldFog = gameState.explored;
 
       gameState.reset();
 
       expect(gameState.enemies.size).toBe(0);
       expect(gameState.items.size).toBe(0);
       expect(gameState.map).not.toBe(oldMap);
-      expect(gameState.fog).not.toBe(oldFog);
+      expect(gameState.explored).not.toBe(oldFog);
       expect(gameState.map).toHaveLength(MAP_HEIGHT);
-      expect(gameState.fog).toHaveLength(MAP_HEIGHT);
+      expect(gameState.explored).toHaveLength(MAP_HEIGHT);
       expect(gameState.map[0][0]).toBeNull();
-      expect(gameState.fog[0][0]).toBe(false);
+      expect(gameState.explored[0][0]).toBe(false);
     });
 
     it('should increment version counter', () => {

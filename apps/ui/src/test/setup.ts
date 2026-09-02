@@ -5,9 +5,6 @@ import { afterEach, expect, vi } from 'vitest';
 // Extend Vitest's expect with jest-dom matchers
 expect.extend(matchers);
 
-// Mock WebSocket globally
-globalThis.WebSocket = vi.fn() as unknown as typeof WebSocket;
-
 // Mock localStorage and sessionStorage
 const storageMock = {
   getItem: vi.fn(),

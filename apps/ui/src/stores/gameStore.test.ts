@@ -22,7 +22,8 @@ describe('gameStore', () => {
         player: visible.player,
         status: visible.status,
         score: visible.score,
-        fog: visible.fog,
+        explored: visible.explored,
+        visibleNow: visible.visibleNow,
       });
     });
 
@@ -91,13 +92,13 @@ describe('gameStore', () => {
       customFog[5][5] = true;
       customFog[6][6] = true;
 
-      const visible = StoreHelpers.visibleGameState({ fog: customFog });
+      const visible = StoreHelpers.visibleGameState({ explored: customFog });
       const local = initializeFromVisible(visible);
 
-      expect(local.fog).toBe(customFog);
-      expect(local.fog[5][5]).toBe(true);
-      expect(local.fog[6][6]).toBe(true);
-      expect(local.fog[0][0]).toBe(false);
+      expect(local.explored).toBe(customFog);
+      expect(local.explored[5][5]).toBe(true);
+      expect(local.explored[6][6]).toBe(true);
+      expect(local.explored[0][0]).toBe(false);
     });
   });
 
@@ -540,21 +541,21 @@ describe('gameStore', () => {
 
       const newState = applyDelta(state, delta);
 
-      expect(newState.fog[10][10]).toBe(true);
-      expect(newState.fog[11][11]).toBe(true);
-      expect(newState.fog[12][12]).toBe(true);
+      expect(newState.explored[10][10]).toBe(true);
+      expect(newState.explored[11][11]).toBe(true);
+      expect(newState.explored[12][12]).toBe(true);
     });
 
     it('should not mutate original fog array', () => {
       const state = initializeFromVisible(StoreHelpers.visibleGameState());
-      state.fog[15][15] = false;
+      state.explored[15][15] = false;
 
       const cells: [number, number][] = [[15, 15]];
       const delta = StoreHelpers.delta.fogReveal(cells);
 
       applyDelta(state, delta);
 
-      expect(state.fog[15][15]).toBe(false);
+      expect(state.explored[15][15]).toBe(false);
     });
 
     it('should handle out-of-bounds cells gracefully', () => {
@@ -568,7 +569,7 @@ describe('gameStore', () => {
 
       const newState = applyDelta(state, delta);
 
-      expect(newState.fog[5][5]).toBe(true);
+      expect(newState.explored[5][5]).toBe(true);
     });
 
     it('should create a new fog array reference', () => {
@@ -577,7 +578,26 @@ describe('gameStore', () => {
 
       const newState = applyDelta(state, delta);
 
-      expect(newState.fog).not.toBe(state.fog);
+      expect(newState.explored).not.toBe(state.explored);
+    });
+  });
+
+  describe('applyDelta - visibility', () => {
+    it('replaces visibleNow without changing explored terrain', () => {
+      const state = initializeFromVisible(StoreHelpers.visibleGameState());
+      const visibleNow = Array.from({ length: MAP_HEIGHT }, () =>
+        Array.from({ length: MAP_WIDTH }, () => false),
+      );
+      visibleNow[7][8] = true;
+
+      const newState = applyDelta(
+        state,
+        StoreHelpers.delta.visibility(visibleNow),
+      );
+
+      expect(newState.explored).toBe(state.explored);
+      expect(newState.visibleNow).not.toBe(visibleNow);
+      expect(newState.visibleNow[7][8]).toBe(true);
     });
   });
 
@@ -887,31 +907,7 @@ describe('gameStore', () => {
     });
   });
 
-  describe('Zustand store - connection state', () => {
-    it('should update connected state', () => {
-      useGameStore.getState().setConnected(true);
-      expect(useGameStore.getState().connected).toBe(true);
-
-      useGameStore.getState().setConnected(false);
-      expect(useGameStore.getState().connected).toBe(false);
-    });
-
-    it('should update reconnecting state', () => {
-      useGameStore.getState().setReconnecting(true);
-      expect(useGameStore.getState().reconnecting).toBe(true);
-
-      useGameStore.getState().setReconnecting(false);
-      expect(useGameStore.getState().reconnecting).toBe(false);
-    });
-
-    it('should update reconnect attempt number', () => {
-      useGameStore.getState().setReconnectAttempt(3);
-      expect(useGameStore.getState().reconnectAttempt).toBe(3);
-
-      useGameStore.getState().setReconnectAttempt(0);
-      expect(useGameStore.getState().reconnectAttempt).toBe(0);
-    });
-
+  describe('Zustand store - request errors', () => {
     it('should update error state', () => {
       useGameStore.getState().setError('Connection failed');
       expect(useGameStore.getState().error).toBe('Connection failed');
@@ -957,9 +953,6 @@ describe('gameStore', () => {
       useGameStore
         .getState()
         .addEvents([{ id: 'event-1', type: 'player_moved', message: 'Moved' }]);
-      useGameStore.getState().setConnected(true);
-      useGameStore.getState().setReconnecting(true);
-      useGameStore.getState().setReconnectAttempt(5);
       useGameStore.getState().setError('Test error');
       useGameStore.getState().setDamagedEntities(['enemy-1']);
 
@@ -970,9 +963,6 @@ describe('gameStore', () => {
       const state = useGameStore.getState();
       expect(state.state).toBeNull();
       expect(state.events).toEqual([]);
-      expect(state.connected).toBe(false);
-      expect(state.reconnecting).toBe(false);
-      expect(state.reconnectAttempt).toBe(0);
       expect(state.error).toBeNull();
       expect(state.damagedEntities).toEqual([]);
     });
@@ -1048,8 +1038,8 @@ describe('gameStore', () => {
       const state = useGameStore.getState().state;
       expect(state?.player.x).toBe(7);
       expect(state?.player.hp).toBe(30);
-      expect(state?.fog[5][7]).toBe(true);
-      expect(state?.fog[5][8]).toBe(true);
+      expect(state?.explored[5][7]).toBe(true);
+      expect(state?.explored[5][8]).toBe(true);
       expect(state?.items.size).toBe(0);
     });
 

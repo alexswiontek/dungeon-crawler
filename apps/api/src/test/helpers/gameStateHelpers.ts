@@ -13,6 +13,7 @@ import type {
 } from '@dungeon-crawler/shared';
 import {
   CHARACTER_STATS,
+  createVisibilityMask,
   ENEMY_STATS,
   EQUIPMENT_DEFINITIONS,
   getXpToNextLevel,
@@ -20,7 +21,6 @@ import {
   MAP_WIDTH,
   VARIANT_MULTIPLIERS,
 } from '@dungeon-crawler/shared';
-import { initializeFog } from '@/services/mapGenerator.js';
 
 /**
  * Create a test game state with sensible defaults and optional overrides
@@ -38,7 +38,8 @@ export function createTestGameState(overrides?: Partial<GameState>): GameState {
     map: defaultMap,
     enemies: [],
     items: [],
-    fog: initializeFog(),
+    explored: createVisibilityMask(),
+    visibleNow: createVisibilityMask(),
     status: 'active',
     score: 0,
     createdAt: new Date(),

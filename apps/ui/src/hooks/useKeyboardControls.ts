@@ -1,5 +1,5 @@
 import type { Direction } from '@dungeon-crawler/shared';
-import type { GameState } from '@/engine/GameState';
+import type { GameClientSnapshot } from '@/game/GameClientModel';
 
 const KEY_MAP = {
   ArrowUp: 'up',
@@ -24,12 +24,12 @@ function isMappedKey(key: string): key is KeyName {
   return key in KEY_MAP;
 }
 
-function isActive(gameState: GameState): boolean {
-  return gameState.player !== null && gameState.status === 'active';
+function isActive(gameState: GameClientSnapshot): boolean {
+  return gameState.status === 'active';
 }
 
 export function useKeyboardControls(
-  gameState: GameState,
+  gameState: GameClientSnapshot,
   sendMove: (dir: Direction) => void,
   sendAttack: () => void,
 ) {

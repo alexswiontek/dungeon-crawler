@@ -19,6 +19,10 @@
     "test:watch": "vitest --watch",
     "test:coverage": "vitest run --coverage"
   },
+  "dependencies": {
+    "@dungeon-crawler/domain": "workspace:*",
+    "@dungeon-crawler/protocol": "workspace:*"
+  },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.0.18",
     "typescript": "^5.3.3",

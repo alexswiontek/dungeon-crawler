@@ -5,12 +5,12 @@ import {
   type Tile,
 } from '@dungeon-crawler/shared';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { generateMap, initializeFog } from '@/test/helpers/gameplayAdapters.js';
 import {
   countTileType,
   findPath,
   validateMapStructure,
 } from '@/test/helpers/mapHelpers.js';
-import { generateMap, initializeFog } from './mapGenerator.js';
 
 describe('generateMap', () => {
   describe('Map Structure', () => {
