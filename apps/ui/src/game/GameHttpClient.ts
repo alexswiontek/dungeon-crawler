@@ -11,6 +11,9 @@ import {
   type NewGameResponse,
   NewGameResponseSchema,
 } from '@dungeon-crawler/protocol';
+import { API_BASE_URL, normalizeApiBaseUrl } from '@/config/apiBaseUrl';
+
+export const DEFAULT_GAME_REQUEST_TIMEOUT_MS = 15_000;
 
 export interface GameSessionCredential {
   readonly gameId: string;
@@ -24,6 +27,7 @@ export interface CreateGameInput {
 
 export interface GameTransport {
   createGame(input: CreateGameInput): Promise<NewGameResponse>;
+  migrateLegacyGame(gameId: string): Promise<NewGameResponse>;
   loadGame(credential: GameSessionCredential): Promise<GameStateResponse>;
   executeAction(
     credential: GameSessionCredential,
@@ -54,6 +58,14 @@ export class GameNetworkError extends Error {
   }
 }
 
+export class GameRequestTimeoutError extends GameNetworkError {
+  constructor() {
+    super();
+    this.message = 'The game server took too long to respond.';
+    this.name = 'GameRequestTimeoutError';
+  }
+}
+
 export class GameProtocolError extends Error {
   constructor(message = 'The server returned an invalid gameplay response.') {
     super(message);
@@ -72,6 +84,7 @@ interface GameHttpClientOptions {
   readonly baseUrl?: string;
   readonly fetch?: typeof fetch;
   readonly now?: () => number;
+  readonly requestTimeoutMs?: number;
 }
 
 function authorization(credential: GameSessionCredential): HeadersInit {
@@ -91,12 +104,21 @@ export class GameHttpClient implements GameTransport {
   private readonly baseUrl: string;
   private readonly fetchImplementation: typeof fetch;
   private readonly now: () => number;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: GameHttpClientOptions = {}) {
-    this.baseUrl = options.baseUrl ?? import.meta.env.VITE_API_URL ?? '/api';
+    this.baseUrl =
+      options.baseUrl === undefined
+        ? API_BASE_URL
+        : normalizeApiBaseUrl(options.baseUrl);
     this.fetchImplementation =
       options.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.now = options.now ?? Date.now;
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? DEFAULT_GAME_REQUEST_TIMEOUT_MS;
+    if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) {
+      throw new RangeError('requestTimeoutMs must be a positive number.');
+    }
   }
 
   createGame(input: CreateGameInput): Promise<NewGameResponse> {
@@ -104,6 +126,14 @@ export class GameHttpClient implements GameTransport {
       method: 'POST',
       body: JSON.stringify(input),
     });
+  }
+
+  migrateLegacyGame(gameId: string): Promise<NewGameResponse> {
+    return this.fetchJson(
+      `${this.gameUrl(gameId)}/migrate`,
+      NewGameResponseSchema,
+      { method: 'POST' },
+    );
   }
 
   loadGame(credential: GameSessionCredential): Promise<GameStateResponse> {
@@ -144,16 +174,27 @@ export class GameHttpClient implements GameTransport {
   }
 
   private async request(url: string, options: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.requestTimeoutMs);
     try {
       return await this.fetchImplementation(url, {
         ...options,
+        signal: controller.signal,
         headers: {
+          [GAMEPLAY_PROTOCOL_HEADER]: GAMEPLAY_PROTOCOL_VERSION,
           ...(options.body ? { 'Content-Type': 'application/json' } : {}),
           ...options.headers,
         },
       });
     } catch {
+      if (timedOut) throw new GameRequestTimeoutError();
       throw new GameNetworkError();
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -176,6 +217,11 @@ export class GameHttpClient implements GameTransport {
     const payload = await this.parseJson(response);
     try {
       const parsed = GameErrorResponseSchema.parse(payload);
+      if (parsed.code === 'PROTOCOL_MISMATCH') {
+        throw new GameProtocolMismatchError(
+          response.headers.get(GAMEPLAY_PROTOCOL_HEADER),
+        );
+      }
       const eligibleAt = retryAt(response, this.now);
       if (parsed.code === 'RATE_LIMITED' && eligibleAt === null) {
         throw new GameProtocolError(
@@ -184,7 +230,12 @@ export class GameHttpClient implements GameTransport {
       }
       return new GameApiError(response.status, parsed, eligibleAt);
     } catch (error) {
-      if (error instanceof GameProtocolError) throw error;
+      if (
+        error instanceof GameProtocolError ||
+        error instanceof GameProtocolMismatchError
+      ) {
+        throw error;
+      }
       throw new GameProtocolError();
     }
   }

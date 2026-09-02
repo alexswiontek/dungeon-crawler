@@ -4,22 +4,18 @@
 import type {
   EnemyType,
   EnemyVariant,
-  GameCommand,
   GameState,
   SeededRandomState,
 } from '@dungeon-crawler/domain';
 import type { GameCommandResult } from '@dungeon-crawler/protocol';
 
-/**
- * A bounded durable receipt. The full original filtered result is retained so
- * an accepted retry can be answered without re-running domain code or RNG.
- */
+/** A bounded durable receipt for replaying action metadata without domain work. */
 export interface GameActionReceipt {
   actionId: string;
   requestFingerprint: string;
-  expectedRevision: number;
-  command: GameCommand;
-  result: GameCommandResult;
+  revision: number;
+  events: GameCommandResult['events'];
+  deltas: GameCommandResult['deltas'];
   recordedAt: Date;
 }
 
@@ -44,6 +40,7 @@ export type LeaderboardDelivery =
  */
 export interface StoredGameDocument {
   _id: string;
+  schemaVersion: 1;
   sessionTokenHash: string;
   revision: number;
   random: {
@@ -55,6 +52,8 @@ export interface StoredGameDocument {
   leaderboard: LeaderboardDelivery;
   updatedAt: Date;
 }
+
+export type LegacyGameDocument = GameState;
 
 /**
  * Leaderboard entry document structure in MongoDB

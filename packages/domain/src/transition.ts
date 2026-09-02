@@ -544,17 +544,22 @@ function enemyAttack(
 }
 
 function moveFleeingEnemy(state: GameState, enemy: Enemy): boolean {
-  const dx = enemy.x > state.player.x ? 1 : enemy.x < state.player.x ? -1 : 0;
-  const dy = enemy.y > state.player.y ? 1 : enemy.y < state.player.y ? -1 : 0;
   const candidates = [
-    { x: enemy.x + dx, y: enemy.y + dy },
-    { x: enemy.x + dx, y: enemy.y },
-    { x: enemy.x, y: enemy.y + dy },
-    { x: enemy.x + 1, y: enemy.y },
-    { x: enemy.x - 1, y: enemy.y },
-    { x: enemy.x, y: enemy.y + 1 },
+    { x: enemy.x - 1, y: enemy.y - 1 },
     { x: enemy.x, y: enemy.y - 1 },
-  ];
+    { x: enemy.x + 1, y: enemy.y - 1 },
+    { x: enemy.x - 1, y: enemy.y },
+    { x: enemy.x + 1, y: enemy.y },
+    { x: enemy.x - 1, y: enemy.y + 1 },
+    { x: enemy.x, y: enemy.y + 1 },
+    { x: enemy.x + 1, y: enemy.y + 1 },
+  ].sort((left, right) => {
+    const leftDistance =
+      Math.abs(left.x - state.player.x) + Math.abs(left.y - state.player.y);
+    const rightDistance =
+      Math.abs(right.x - state.player.x) + Math.abs(right.y - state.player.y);
+    return rightDistance - leftDistance;
+  });
   const target = candidates.find(
     (candidate) =>
       (candidate.x !== enemy.x || candidate.y !== enemy.y) &&
@@ -574,22 +579,26 @@ function runEnemyTurn(
   const { x: playerX, y: playerY } = state.player;
   const activeEnemies = state.enemies
     .filter((enemy) => enemy.hp > 0)
-    .map((enemy) => ({
-      enemy,
-      distance: Math.abs(enemy.x - playerX) + Math.abs(enemy.y - playerY),
-    }))
-    .sort((left, right) => left.distance - right.distance);
+    .map((enemy) => {
+      const distance =
+        Math.abs(enemy.x - playerX) + Math.abs(enemy.y - playerY);
+      return {
+        enemy,
+        distance,
+        canSeePlayer:
+          distance <= 7 &&
+          hasLineOfSight(state, enemy.x, enemy.y, playerX, playerY),
+      };
+    })
+    .sort(
+      (left, right) =>
+        Number(right.canSeePlayer) - Number(left.canSeePlayer) ||
+        left.distance - right.distance,
+    );
   let pathfinds = 0;
 
-  for (const { enemy, distance } of activeEnemies) {
+  for (const { enemy, distance, canSeePlayer } of activeEnemies) {
     if (distance > 7) continue;
-    const canSeePlayer = hasLineOfSight(
-      state,
-      enemy.x,
-      enemy.y,
-      playerX,
-      playerY,
-    );
     if (canSeePlayer) enemy.lastSeenPlayer = { x: playerX, y: playerY };
 
     if (enemy.behavior === 'stationary') {
@@ -610,6 +619,15 @@ function runEnemyTurn(
 
     if (enemy.behavior === 'patrol' && !canSeePlayer) continue;
     if (!canSeePlayer && !enemy.lastSeenPlayer) continue;
+    if (
+      !canSeePlayer &&
+      enemy.lastSeenPlayer &&
+      enemy.x === enemy.lastSeenPlayer.x &&
+      enemy.y === enemy.lastSeenPlayer.y
+    ) {
+      enemy.lastSeenPlayer = undefined;
+      continue;
+    }
     if (isAdjacent(enemy, playerX, playerY)) {
       events.push(...enemyAttack(state, enemy, context));
       if (state.status === 'dead') return events;
@@ -629,6 +647,8 @@ function runEnemyTurn(
       enemy.y = step.y;
       if (isAdjacent(enemy, playerX, playerY))
         events.push(...enemyAttack(state, enemy, context));
+    } else if (!canSeePlayer) {
+      enemy.lastSeenPlayer = undefined;
     }
     if (state.status === 'dead') return events;
   }

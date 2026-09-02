@@ -1,6 +1,19 @@
+import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@dungeon-crawler/domain': path.resolve(
+        import.meta.dirname,
+        '../domain/src/index.ts',
+      ),
+      '@dungeon-crawler/protocol': path.resolve(
+        import.meta.dirname,
+        '../protocol/src/index.ts',
+      ),
+    },
+  },
   test: {
     name: 'shared',
     environment: 'node',

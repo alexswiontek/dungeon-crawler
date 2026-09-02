@@ -230,6 +230,83 @@ describe('domain boundaries', () => {
     ]);
   });
 
+  it('uses a legal diagonal when it is the best remaining flee route', () => {
+    const state = stateFixture();
+    state.player.x = 8;
+    state.player.y = 6;
+    state.player.facingDirection = 'right';
+    state.enemies = [
+      {
+        id: 'fleeing-rat',
+        type: 'rat',
+        variant: 'normal',
+        displayName: 'Rat',
+        x: 6,
+        y: 6,
+        hp: 1,
+        maxHp: 6,
+        attack: 0,
+        defense: 0,
+        behavior: 'flee',
+      },
+    ];
+    for (let y = 5; y <= 7; y++) {
+      for (let x = 5; x <= 7; x++) {
+        state.map[y][x] = { type: 'wall', x, y };
+      }
+    }
+    state.map[6][6] = { type: 'floor', x: 6, y: 6 };
+    state.map[6][7] = { type: 'floor', x: 7, y: 6 };
+    state.map[7][5] = { type: 'floor', x: 5, y: 7 };
+
+    attackAtRange(state, context());
+
+    expect(state.enemies[0]).toMatchObject({ x: 5, y: 7 });
+  });
+
+  it('prioritizes a visible chaser over stale remembered targets', () => {
+    const state = stateFixture();
+    state.player.x = 2;
+    state.player.y = 2;
+    state.player.facingDirection = 'left';
+    for (let y = 1; y <= 7; y++) {
+      state.map[y][3] = { type: 'wall', x: 3, y };
+    }
+    state.enemies = [
+      ...Array.from({ length: 5 }, (_, index) => ({
+        id: `stale-${index}`,
+        type: 'skeleton' as const,
+        variant: 'normal' as const,
+        displayName: 'Skeleton',
+        x: 4,
+        y: 2 + index,
+        hp: 12,
+        maxHp: 12,
+        attack: 0,
+        defense: 0,
+        behavior: 'aggressive' as const,
+        lastSeenPlayer: { x: 4, y: 8 },
+      })),
+      {
+        id: 'visible-chaser',
+        type: 'skeleton',
+        variant: 'normal',
+        displayName: 'Skeleton',
+        x: 2,
+        y: 8,
+        hp: 12,
+        maxHp: 12,
+        attack: 0,
+        defense: 0,
+        behavior: 'aggressive',
+      },
+    ];
+
+    attackAtRange(state, context());
+
+    expect(state.enemies.at(-1)).toMatchObject({ x: 2, y: 7 });
+  });
+
   it('retains explored terrain while recalculating visibleNow', () => {
     const state = stateFixture();
     state.explored[1][1] = true;

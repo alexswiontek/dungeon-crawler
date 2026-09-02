@@ -13,6 +13,7 @@ import {
   GameNetworkError,
   GameProtocolError,
   GameProtocolMismatchError,
+  GameRequestTimeoutError,
   type GameSessionCredential,
   type GameTransport,
   isInvalidSessionError,
@@ -195,6 +196,40 @@ export class GameGateway implements GameGatewayContract {
     }
   }
 
+  async migrateLegacyGame(gameId: string): Promise<GameResult> {
+    if (this.credential || this.model) {
+      throw new GatewayStateError('This gateway is already bound to a game.');
+    }
+    this.setLifecycle({ kind: 'loading' });
+    try {
+      const response = await this.transport.migrateLegacyGame(gameId);
+      this.assertProjection(response.gameId, response.revision, response.state);
+      this.credential = {
+        gameId: response.gameId,
+        sessionToken: response.sessionToken,
+      };
+      if (this.storage.saveActiveGame(this.credential)) {
+        this.storage.clearLegacyGame();
+      }
+      return this.acceptInitial(response.revision, response.state);
+    } catch (error) {
+      if (isInvalidSessionError(error)) this.storage.clearLegacyGame();
+      if (
+        error instanceof GameApiError &&
+        error.response.code === 'GAME_FINISHED'
+      ) {
+        this.storage.clearLegacyGame();
+        this.setLifecycle({
+          kind: 'session-invalid',
+          message: 'That saved game has already finished. Start a new game.',
+        });
+        throw error;
+      }
+      this.handleSetupError(error, 'load-failed');
+      throw error;
+    }
+  }
+
   async loadGame(): Promise<GameResult> {
     const credential = this.requireCredential();
     this.setLifecycle({ kind: 'loading' });
@@ -353,6 +388,7 @@ export class GameGateway implements GameGatewayContract {
         model.getSnapshot().id,
         response.revision,
         response.state,
+        model.getSnapshot().revision,
       );
       model.replace(response.state);
       const result = resultFrom(
@@ -447,6 +483,16 @@ export class GameGateway implements GameGatewayContract {
       }
     }
 
+    if (error instanceof GameRequestTimeoutError) {
+      this.setLifecycle({
+        kind: 'retry-required',
+        message:
+          'The action timed out. Retry Action will resend the same action without applying it twice.',
+        retryAt: null,
+      });
+      return;
+    }
+
     if (error instanceof GameNetworkError) {
       this.setLifecycle({
         kind: 'retry-required',
@@ -498,6 +544,7 @@ export class GameGateway implements GameGatewayContract {
         model.getSnapshot().id,
         response.revision,
         response.state,
+        model.getSnapshot().revision,
       );
       model.replace(response.state);
     } catch (protocolError) {
@@ -543,6 +590,7 @@ export class GameGateway implements GameGatewayContract {
         model.getSnapshot().id,
         response.revision,
         response.state,
+        model.getSnapshot().revision,
       );
       model.replace(response.state);
     } catch (protocolError) {
@@ -581,6 +629,7 @@ export class GameGateway implements GameGatewayContract {
         model.getSnapshot().id,
         response.revision,
         response.state,
+        model.getSnapshot().revision,
       );
       model.replace(response.state);
       const result = resultFrom(model, response.revision);
@@ -662,8 +711,13 @@ export class GameGateway implements GameGatewayContract {
     gameId: string,
     revision: number,
     state: VisibleGameState,
+    minimumRevision = 0,
   ): void {
-    if (state._id !== gameId || state.revision !== revision) {
+    if (
+      state._id !== gameId ||
+      state.revision !== revision ||
+      revision < minimumRevision
+    ) {
       throw new GameProtocolError(
         'The gameplay response contained inconsistent authoritative state.',
       );
@@ -701,6 +755,7 @@ export class GameGateway implements GameGatewayContract {
 
 export interface GameGatewayContract {
   createGame(input: CreateGameInput): Promise<GameResult>;
+  migrateLegacyGame(gameId: string): Promise<GameResult>;
   loadGame(): Promise<GameResult>;
   execute(command: GameCommand): Promise<GameResult>;
   retryPendingAction(): Promise<GameResult>;

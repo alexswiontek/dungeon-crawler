@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import {
   createGame,
   createSeededRandom,
@@ -13,6 +14,7 @@ import {
   diffClientProjections,
   type ExecuteGameCommandRequest,
   type GameCommandResult,
+  type GameErrorCode,
   type GameStateResponse,
   type NewGameRequest,
   type NewGameResponse,
@@ -27,6 +29,7 @@ import {
 } from '@/services/sessionToken.js';
 import type {
   GameActionReceipt,
+  LegacyGameDocument,
   LeaderboardDelivery,
   LeaderboardDoc,
   StoredGameDocument,
@@ -35,6 +38,8 @@ import { GameServiceError } from '@/types/gameServiceErrors.js';
 import { logger as defaultLogger } from '@/utils/logger.js';
 
 export const ACTION_RECEIPT_LIMIT = 16;
+export const LEADERBOARD_RECONCILIATION_BATCH_SIZE = 100;
+export const LEADERBOARD_RECONCILIATION_CONCURRENCY = 5;
 export const DURABLE_WRITE_CONCERN = {
   w: 'majority' as const,
   j: true,
@@ -46,9 +51,38 @@ interface ServiceLogger {
   error(object: object, message?: string): void;
 }
 
+type GameCommandOutcome =
+  | 'committed'
+  | 'exact_retry'
+  | 'invalid_command'
+  | 'revision_conflict'
+  | 'action_id_reused'
+  | 'game_finished'
+  | 'unauthorized'
+  | 'game_not_found'
+  | 'rate_limited'
+  | 'database_failure'
+  | 'rejected'
+  | 'internal_failure';
+
+const COMMAND_OUTCOME_BY_ERROR_CODE = {
+  INVALID_COMMAND: 'invalid_command',
+  REVISION_CONFLICT: 'revision_conflict',
+  ACTION_ID_REUSED: 'action_id_reused',
+  GAME_FINISHED: 'game_finished',
+  UNAUTHORIZED: 'unauthorized',
+  GAME_NOT_FOUND: 'game_not_found',
+  RATE_LIMITED: 'rate_limited',
+  DATABASE_UNAVAILABLE: 'database_failure',
+  DATABASE_ERROR: 'database_failure',
+  INVALID_PLAYER_NAME: 'rejected',
+  PROTOCOL_MISMATCH: 'rejected',
+} satisfies Record<GameErrorCode, GameCommandOutcome>;
+
 export interface GameCommandServiceDependencies {
   getDatabase: () => Db;
   now: () => Date;
+  monotonicNow: () => number;
   createId: () => string;
   createToken: () => string;
   createSeed: () => string;
@@ -59,6 +93,7 @@ export interface GameCommandServiceDependencies {
 const defaultDependencies: GameCommandServiceDependencies = {
   getDatabase: getDb,
   now: () => new Date(),
+  monotonicNow: () => performance.now(),
   createId: randomUUID,
   createToken: createSessionToken,
   createSeed: () => randomBytes(32).toString('base64url'),
@@ -125,7 +160,13 @@ function receiptResult(
       { actionId: request.actionId },
     );
   }
-  return receipt.result;
+  return {
+    actionId: receipt.actionId,
+    revision: document.revision,
+    state: projectGameState(document.game, document.revision),
+    events: receipt.events,
+    deltas: receipt.revision === document.revision ? receipt.deltas : [],
+  };
 }
 
 function leaderboardDelivery(
@@ -156,19 +197,53 @@ function databaseFailure(): GameServiceError {
   );
 }
 
+function databaseErrorMetadata(error: unknown): {
+  databaseErrorName: string;
+  databaseErrorCode?: string | number;
+} {
+  const databaseErrorName =
+    error instanceof Error ? error.name : 'UnknownDatabaseError';
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return { databaseErrorName };
+  }
+  const code = error.code;
+  return typeof code === 'string' || typeof code === 'number'
+    ? { databaseErrorName, databaseErrorCode: code }
+    : { databaseErrorName };
+}
+
+function commandOutcomeForError(error: unknown): GameCommandOutcome {
+  if (!(error instanceof GameServiceError)) return 'internal_failure';
+  return COMMAND_OUTCOME_BY_ERROR_CODE[error.code];
+}
+
+function elapsedMilliseconds(startedAt: number, finishedAt: number): number {
+  const duration = finishedAt - startedAt;
+  return Number.isFinite(duration) && duration >= 0 ? duration : 0;
+}
+
+interface CommandExecution {
+  result: GameCommandResult;
+  outcome: 'committed' | 'exact_retry';
+}
+
 export function createGameCommandService(
   overrides: Partial<GameCommandServiceDependencies> = {},
 ) {
   const dependencies = { ...defaultDependencies, ...overrides };
   const games = () =>
     dependencies.getDatabase().collection<StoredGameDocument>('games');
+  let reconciliationInFlight: Promise<number> | null = null;
 
   async function findGame(gameId: string): Promise<StoredGameDocument> {
     let document: StoredGameDocument | null;
     try {
       document = await games().findOne({ _id: gameId });
     } catch (error) {
-      dependencies.logger.error({ err: error, gameId }, 'Game read failed');
+      dependencies.logger.error(
+        { ...databaseErrorMetadata(error), gameId },
+        'Game read failed',
+      );
       throw databaseFailure();
     }
     if (!document) {
@@ -179,7 +254,7 @@ export function createGameCommandService(
 
   async function deliverLeaderboard(gameId: string): Promise<void> {
     const document = await games().findOne({ _id: gameId });
-    if (!document || document.leaderboard.status !== 'pending') return;
+    if (document?.leaderboard.status !== 'pending') return;
 
     const outcome = document.leaderboard.outcome;
     const entry: LeaderboardDoc = {
@@ -222,7 +297,7 @@ export function createGameCommandService(
       await deliverLeaderboard(gameId);
     } catch (error) {
       dependencies.logger.error(
-        { err: error, gameId },
+        { ...databaseErrorMetadata(error), gameId },
         'Leaderboard delivery deferred',
       );
     }
@@ -247,6 +322,7 @@ export function createGameCommandService(
     );
     const document: StoredGameDocument = {
       _id: gameId,
+      schemaVersion: 1,
       sessionTokenHash: hashSessionToken(sessionToken),
       revision: 0,
       random: { seed, state: random.snapshot() },
@@ -261,11 +337,78 @@ export function createGameCommandService(
         writeConcern: DURABLE_WRITE_CONCERN,
       });
     } catch (error) {
-      dependencies.logger.error({ err: error, gameId }, 'Game creation failed');
+      dependencies.logger.error(
+        { ...databaseErrorMetadata(error), gameId },
+        'Game creation failed',
+      );
       throw databaseFailure();
     }
 
     const state = projectGameState(game, 0);
+    return { gameId, sessionToken, revision: 0, state };
+  }
+
+  async function migrateLegacyGame(gameId: string): Promise<NewGameResponse> {
+    const sessionToken = dependencies.createToken();
+    const seed = dependencies.createSeed();
+    const random = createSeededRandom(seed);
+    const legacy = await dependencies
+      .getDatabase()
+      .collection<LegacyGameDocument>('games')
+      .findOne({
+        _id: gameId,
+        sessionTokenHash: { $exists: false },
+        game: { $exists: false },
+      } as never);
+    if (!legacy) {
+      throw new GameServiceError(
+        'GAME_NOT_FOUND',
+        'Legacy game not found or already migrated',
+      );
+    }
+    if (legacy.status !== 'active') {
+      throw new GameServiceError('GAME_FINISHED', 'Game is already finished');
+    }
+
+    const document: StoredGameDocument = {
+      _id: gameId,
+      schemaVersion: 1,
+      sessionTokenHash: hashSessionToken(sessionToken),
+      revision: 0,
+      random: { seed, state: random.snapshot() },
+      game: cloneGame(legacy),
+      actionReceipts: [],
+      leaderboard: { status: 'none' },
+      updatedAt: legacy.updatedAt,
+    };
+    let migrated: { matchedCount: number };
+    try {
+      migrated = await dependencies
+        .getDatabase()
+        .collection<StoredGameDocument>('games')
+        .replaceOne(
+          {
+            _id: gameId,
+            sessionTokenHash: { $exists: false },
+            game: { $exists: false },
+          } as never,
+          document,
+          { writeConcern: DURABLE_WRITE_CONCERN },
+        );
+    } catch (error) {
+      dependencies.logger.error(
+        { ...databaseErrorMetadata(error), gameId },
+        'Legacy game migration failed',
+      );
+      throw databaseFailure();
+    }
+    if (migrated.matchedCount === 0) {
+      throw new GameServiceError(
+        'GAME_NOT_FOUND',
+        'Legacy game not found or already migrated',
+      );
+    }
+    const state = projectGameState(document.game, 0);
     return { gameId, sessionToken, revision: 0, state };
   }
 
@@ -280,16 +423,16 @@ export function createGameCommandService(
     return { revision: document.revision, state };
   }
 
-  async function executeGameCommand(
+  async function executeGameCommandCore(
     request: ExecuteGameCommandRequest,
-  ): Promise<GameCommandResult> {
+  ): Promise<CommandExecution> {
     const document = await findGame(request.gameId);
     authenticate(document, request.sessionToken);
 
     const cached = receiptResult(document, request);
     if (cached) {
       void tryDeliverLeaderboard(request.gameId);
-      return cached;
+      return { result: cached, outcome: 'exact_retry' };
     }
 
     let actionOwner: StoredGameDocument | null;
@@ -303,7 +446,11 @@ export function createGameCommandService(
       );
     } catch (error) {
       dependencies.logger.error(
-        { err: error, gameId: request.gameId, actionId: request.actionId },
+        {
+          ...databaseErrorMetadata(error),
+          gameId: request.gameId,
+          actionId: request.actionId,
+        },
         'Action identity lookup failed',
       );
       throw databaseFailure();
@@ -372,13 +519,14 @@ export function createGameCommandService(
         request.expectedRevision,
         request.command,
       ),
-      expectedRevision: request.expectedRevision,
-      command: request.command,
-      result,
+      revision,
+      events: result.events,
+      deltas: result.deltas,
       recordedAt: dependencies.now(),
     };
     const nextDocument: StoredGameDocument = {
       ...document,
+      schemaVersion: 1,
       revision,
       random: { seed: document.random.seed, state: random.snapshot() },
       game: transition.state,
@@ -407,7 +555,9 @@ export function createGameCommandService(
         const current = await findGame(request.gameId);
         authenticate(current, request.sessionToken);
         const concurrentRetry = receiptResult(current, request);
-        if (concurrentRetry) return concurrentRetry;
+        if (concurrentRetry) {
+          return { result: concurrentRetry, outcome: 'exact_retry' };
+        }
         throw new GameServiceError(
           'REVISION_CONFLICT',
           'Game state changed; synchronize and try a new action',
@@ -423,7 +573,9 @@ export function createGameCommandService(
       if (duplicateKey(error)) {
         const current = await findGame(request.gameId);
         const concurrentRetry = receiptResult(current, request);
-        if (concurrentRetry) return concurrentRetry;
+        if (concurrentRetry) {
+          return { result: concurrentRetry, outcome: 'exact_retry' };
+        }
         throw new GameServiceError(
           'ACTION_ID_REUSED',
           'This action ID was already used for a different request',
@@ -432,7 +584,7 @@ export function createGameCommandService(
       }
       dependencies.logger.error(
         {
-          err: error,
+          ...databaseErrorMetadata(error),
           gameId: request.gameId,
           actionId: request.actionId,
           expectedRevision: request.expectedRevision,
@@ -442,17 +594,55 @@ export function createGameCommandService(
       throw databaseFailure();
     }
 
-    dependencies.logger.info(
-      {
+    void tryDeliverLeaderboard(request.gameId);
+    return { result, outcome: 'committed' };
+  }
+
+  async function executeGameCommand(
+    request: ExecuteGameCommandRequest,
+  ): Promise<GameCommandResult> {
+    const startedAt = dependencies.monotonicNow();
+    try {
+      const execution = await executeGameCommandCore(request);
+      dependencies.logger.info(
+        {
+          gameId: request.gameId,
+          actionId: request.actionId,
+          expectedRevision: request.expectedRevision,
+          commandType: request.command.type,
+          durationMs: elapsedMilliseconds(
+            startedAt,
+            dependencies.monotonicNow(),
+          ),
+          outcome: execution.outcome,
+          revision: execution.result.revision,
+        },
+        'Game command outcome',
+      );
+      return execution.result;
+    } catch (error) {
+      const outcome = commandOutcomeForError(error);
+      const publicError = error instanceof GameServiceError ? error : undefined;
+      const record = {
         gameId: request.gameId,
         actionId: request.actionId,
-        revision,
+        expectedRevision: request.expectedRevision,
         commandType: request.command.type,
-      },
-      'Game command committed',
-    );
-    void tryDeliverLeaderboard(request.gameId);
-    return result;
+        durationMs: elapsedMilliseconds(startedAt, dependencies.monotonicNow()),
+        outcome,
+        ...(publicError ? { errorCode: publicError.code } : {}),
+        ...(publicError?.safeContext?.revision !== undefined
+          ? { revision: publicError.safeContext.revision }
+          : {}),
+      };
+      const message = 'Game command outcome';
+      if (outcome === 'database_failure' || outcome === 'internal_failure') {
+        dependencies.logger.error(record, message);
+      } else {
+        dependencies.logger.info(record, message);
+      }
+      throw error;
+    }
   }
 
   async function deleteGame(
@@ -461,44 +651,106 @@ export function createGameCommandService(
   ): Promise<void> {
     const document = await findGame(gameId);
     authenticate(document, sessionToken);
-    if (document.leaderboard.status === 'pending') {
-      try {
-        await deliverLeaderboard(gameId);
-      } catch (error) {
-        dependencies.logger.error(
-          { err: error, gameId },
-          'Cannot delete game before pending leaderboard delivery',
-        );
-        throw databaseFailure();
-      }
+    if (document.game.status !== 'active') {
+      void tryDeliverLeaderboard(gameId);
+      throw new GameServiceError('GAME_FINISHED', 'Game is already finished', {
+        revision: document.revision,
+        state: projectGameState(document.game, document.revision),
+      });
     }
     try {
       const result = await games().deleteOne(
-        { _id: gameId, sessionTokenHash: document.sessionTokenHash },
+        {
+          _id: gameId,
+          sessionTokenHash: document.sessionTokenHash,
+          revision: document.revision,
+          'game.status': 'active',
+          'leaderboard.status': 'none',
+        },
         { writeConcern: DURABLE_WRITE_CONCERN },
       );
       if (result.deletedCount === 0) {
-        throw new GameServiceError('GAME_NOT_FOUND', 'Game not found');
+        const current = await findGame(gameId);
+        authenticate(current, sessionToken);
+        if (current.game.status !== 'active') {
+          void tryDeliverLeaderboard(gameId);
+          throw new GameServiceError(
+            'GAME_FINISHED',
+            'Game is already finished',
+            {
+              revision: current.revision,
+              state: projectGameState(current.game, current.revision),
+            },
+          );
+        }
+        throw new GameServiceError(
+          'REVISION_CONFLICT',
+          'Game state changed; synchronize before abandoning',
+          {
+            revision: current.revision,
+            state: projectGameState(current.game, current.revision),
+          },
+        );
       }
     } catch (error) {
       if (error instanceof GameServiceError) throw error;
-      dependencies.logger.error({ err: error, gameId }, 'Game deletion failed');
+      dependencies.logger.error(
+        { ...databaseErrorMetadata(error), gameId },
+        'Game deletion failed',
+      );
       throw databaseFailure();
     }
   }
 
-  async function reconcilePendingLeaderboards(): Promise<number> {
-    const pending = await games()
-      .find({ 'leaderboard.status': 'pending' }, { projection: { _id: 1 } })
-      .toArray();
-    const results = await Promise.allSettled(
-      pending.map((document) => deliverLeaderboard(document._id)),
+  function reconcilePendingLeaderboards(): Promise<number> {
+    if (reconciliationInFlight) return reconciliationInFlight;
+    const run = (async () => {
+      const pending = await games()
+        .find({ 'leaderboard.status': 'pending' }, { projection: { _id: 1 } })
+        .limit(LEADERBOARD_RECONCILIATION_BATCH_SIZE)
+        .toArray();
+      let next = 0;
+      const worker = async (): Promise<number> => {
+        let delivered = 0;
+        while (next < pending.length) {
+          const document = pending[next++];
+          if (!document) break;
+          try {
+            await deliverLeaderboard(document._id);
+            delivered += 1;
+          } catch {
+            // Failed deliveries remain pending for a later bounded pass.
+          }
+        }
+        return delivered;
+      };
+      const workers = Array.from(
+        {
+          length: Math.min(
+            LEADERBOARD_RECONCILIATION_CONCURRENCY,
+            pending.length,
+          ),
+        },
+        worker,
+      );
+      const counts = await Promise.all(workers);
+      return counts.reduce((total, count) => total + count, 0);
+    })();
+    reconciliationInFlight = run;
+    void run.then(
+      () => {
+        if (reconciliationInFlight === run) reconciliationInFlight = null;
+      },
+      () => {
+        if (reconciliationInFlight === run) reconciliationInFlight = null;
+      },
     );
-    return results.filter((result) => result.status === 'fulfilled').length;
+    return run;
   }
 
   return {
     createGameSession,
+    migrateLegacyGame,
     readGame,
     executeGameCommand,
     deleteGame,
@@ -510,6 +762,7 @@ export function createGameCommandService(
 const service = createGameCommandService();
 
 export const createGameSession = service.createGameSession;
+export const migrateLegacyGame = service.migrateLegacyGame;
 export const readGame = service.readGame;
 export const executeGameCommand = service.executeGameCommand;
 export const deleteGame = service.deleteGame;
@@ -521,11 +774,17 @@ let reconciliationInterval: NodeJS.Timeout | null = null;
 export function startLeaderboardReconciliation(): void {
   if (reconciliationInterval) return;
   void reconcilePendingLeaderboards().catch((error) => {
-    defaultLogger.error({ err: error }, 'Leaderboard reconciliation failed');
+    defaultLogger.error(
+      databaseErrorMetadata(error),
+      'Leaderboard reconciliation failed',
+    );
   });
   reconciliationInterval = setInterval(() => {
     void reconcilePendingLeaderboards().catch((error) => {
-      defaultLogger.error({ err: error }, 'Leaderboard reconciliation failed');
+      defaultLogger.error(
+        databaseErrorMetadata(error),
+        'Leaderboard reconciliation failed',
+      );
     });
   }, 60_000);
 }

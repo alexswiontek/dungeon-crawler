@@ -1,0 +1,12 @@
+{
+  "extends": ["./tsconfig.json", "../../tsconfig.workspace-source.json"],
+  "compilerOptions": {
+    "rootDir": "../..",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@dungeon-crawler/domain": ["../../packages/domain/src/index.ts"],
+      "@dungeon-crawler/protocol": ["../../packages/protocol/src/index.ts"],
+      "@dungeon-crawler/shared": ["../../packages/shared/src/index.ts"]
+    }
+  }
+}

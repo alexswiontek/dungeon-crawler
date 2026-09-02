@@ -28,40 +28,47 @@ export function GameCanvas({
     'loading',
   );
   const mountedRef = useRef(false);
-
-  // Store singletons in refs to avoid effect re-runs
-  const gameModelRef = useRef(gameModel);
-  const assetsRef = useRef(assets);
-  const viewportTilesRef = useRef(viewportTiles);
-  const tileScaleRef = useRef(tileScale);
-  const damagedEntitiesRef = useRef(damagedEntities);
-
-  // Keep refs updated
-  gameModelRef.current = gameModel;
-  assetsRef.current = assets;
-  viewportTilesRef.current = viewportTiles;
-  tileScaleRef.current = tileScale;
-  damagedEntitiesRef.current = damagedEntities;
+  const initializationRef = useRef(0);
+  const configRef = useRef({ viewportTiles, tileScale, damagedEntities });
 
   const initializeRenderer = useCallback(async (): Promise<void> => {
+    const initialization = ++initializationRef.current;
+    let renderer: Renderer | null = null;
+    rendererRef.current?.stop();
+    rendererRef.current = null;
     setAssetStatus('loading');
     try {
-      await assetsRef.current.loadAll();
-      if (!mountedRef.current || !canvasRef.current) return;
-      const renderer = new Renderer(
-        canvasRef.current,
-        assetsRef.current,
-        gameModelRef.current,
-      );
-      renderer.setViewport(viewportTilesRef.current, tileScaleRef.current);
-      renderer.setDamagedEntities(damagedEntitiesRef.current);
-      renderer.start();
+      await assets.loadAll();
+      if (
+        !mountedRef.current ||
+        initialization !== initializationRef.current ||
+        !canvasRef.current
+      ) {
+        return;
+      }
+      renderer = new Renderer(canvasRef.current, assets, gameModel);
+      const config = configRef.current;
+      renderer.setViewport(config.viewportTiles, config.tileScale);
+      renderer.setDamagedEntities(config.damagedEntities);
       rendererRef.current = renderer;
+      await renderer.start();
+      if (
+        !mountedRef.current ||
+        initialization !== initializationRef.current ||
+        rendererRef.current !== renderer
+      ) {
+        renderer.stop();
+        return;
+      }
       setAssetStatus('ready');
     } catch {
-      if (mountedRef.current) setAssetStatus('error');
+      renderer?.stop();
+      if (rendererRef.current === renderer) rendererRef.current = null;
+      if (mountedRef.current && initialization === initializationRef.current) {
+        setAssetStatus('error');
+      }
     }
-  }, []);
+  }, [assets, gameModel]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -70,6 +77,7 @@ export function GameCanvas({
 
     return () => {
       mountedRef.current = false;
+      initializationRef.current += 1;
       rendererRef.current?.stop();
       rendererRef.current = null;
     };
@@ -77,13 +85,18 @@ export function GameCanvas({
 
   // Update viewport config when it changes
   useEffect(() => {
+    configRef.current = {
+      ...configRef.current,
+      viewportTiles,
+      tileScale,
+    };
     rendererRef.current?.setViewport(viewportTiles, tileScale);
   }, [viewportTiles, tileScale]);
 
-  // Update damaged entities imperatively (Renderer reads on each frame)
-  if (rendererRef.current) {
-    rendererRef.current.setDamagedEntities(damagedEntities);
-  }
+  useEffect(() => {
+    configRef.current = { ...configRef.current, damagedEntities };
+    rendererRef.current?.setDamagedEntities(damagedEntities);
+  }, [damagedEntities]);
 
   // Canvas dimensions - internal resolution (not scaled)
   const canvasWidth = viewportTiles.x * TILE_SIZE;

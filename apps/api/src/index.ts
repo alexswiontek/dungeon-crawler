@@ -41,6 +41,7 @@ const ALLOWED_ORIGINS = (
   .filter((origin) => origin.length > 0);
 
 const fastify = Fastify({
+  trustProxy: true,
   logger:
     process.env.NODE_ENV === 'production'
       ? {

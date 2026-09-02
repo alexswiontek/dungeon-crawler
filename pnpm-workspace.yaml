@@ -4,3 +4,6 @@ packages:
 
 allowBuilds:
   esbuild: true
+
+overrides:
+  yaml: ^2.8.3

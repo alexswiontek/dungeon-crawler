@@ -4,11 +4,13 @@ import {
   type GameActionRequest,
 } from '@dungeon-crawler/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { normalizeApiBaseUrl } from '@/config/apiBaseUrl';
 import {
   GameApiError,
   GameHttpClient,
   GameProtocolError,
   GameProtocolMismatchError,
+  GameRequestTimeoutError,
 } from '@/game/GameHttpClient';
 import { StoreHelpers } from '@/test/helpers/storeHelpers';
 
@@ -116,22 +118,106 @@ describe('GameHttpClient', () => {
         credential.sessionToken,
       );
     }
+    for (const [, options] of fetchMock.mock.calls) {
+      expect(options?.headers).toEqual(
+        expect.objectContaining({
+          [GAMEPLAY_PROTOCOL_HEADER]: GAMEPLAY_PROTOCOL_VERSION,
+        }),
+      );
+    }
   });
+
+  it('migrates a legacy game through the one-time canonical route', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      jsonResponse({
+        gameId: credential.gameId,
+        sessionToken: credential.sessionToken,
+        revision: 0,
+        state,
+      }),
+    );
+    const client = new GameHttpClient({ baseUrl: '/api/', fetch: fetchMock });
+
+    await client.migrateLegacyGame(credential.gameId);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/games/client-game/migrate',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('aborts a stalled request at the configured deadline', async () => {
+    const fetchMock = vi.fn<typeof fetch>((_input, init) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'));
+        });
+      });
+    });
+    const client = new GameHttpClient({
+      baseUrl: '/api',
+      fetch: fetchMock,
+      requestTimeoutMs: 5,
+    });
+
+    await expect(client.loadGame(credential)).rejects.toBeInstanceOf(
+      GameRequestTimeoutError,
+    );
+  });
+
+  it.each([
+    [undefined, '/api'],
+    ['', '/api'],
+    ['   ', '/api'],
+    ['/', ''],
+    ['/custom/', '/custom'],
+    ['https://example.com/api/', 'https://example.com/api'],
+  ])('normalizes API base %j', (value, expected) => {
+    expect(normalizeApiBaseUrl(value)).toBe(expected);
+  });
+
+  it.each(['api', '//example.com/api', 'ftp://example.com/api'])(
+    'rejects malformed API base %s',
+    (value) => {
+      expect(() => normalizeApiBaseUrl(value)).toThrow(TypeError);
+    },
+  );
 
   it.each([
     ['missing', null],
     ['mismatched', '0'],
-  ])('rejects a %s protocol version before applying success', async (_name, version) => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        jsonResponse({ revision: 0, state }, 200, version),
+  ])(
+    'rejects a %s protocol version before applying success',
+    async (_name, version) => {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          jsonResponse({ revision: 0, state }, 200, version),
+        );
+
+      const client = new GameHttpClient({ baseUrl: '/api', fetch: fetchMock });
+
+      await expect(client.loadGame(credential)).rejects.toBeInstanceOf(
+        GameProtocolMismatchError,
       );
+    },
+  );
+
+  it('maps a server-side protocol rejection before reading application data', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: 'This client is incompatible with the game server',
+          code: 'PROTOCOL_MISMATCH',
+        },
+        409,
+      ),
+    );
     const client = new GameHttpClient({ baseUrl: '/api', fetch: fetchMock });
 
-    await expect(client.loadGame(credential)).rejects.toBeInstanceOf(
-      GameProtocolMismatchError,
-    );
+    await expect(
+      client.createGame({ playerName: 'Ada', character: 'wizard' }),
+    ).rejects.toBeInstanceOf(GameProtocolMismatchError);
   });
 
   it('requires the protocol version on typed errors and 204 deletion', async () => {

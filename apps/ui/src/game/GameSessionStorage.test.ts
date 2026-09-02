@@ -83,13 +83,31 @@ describe('GameSessionStorage', () => {
     expect(values.size).toBe(0);
   });
 
-  it('removes the legacy unversioned Phase 3 record', () => {
+  it('preserves and parses the exact legacy record until migration succeeds', () => {
     values.set(
       LEGACY_ACTIVE_GAME_KEY,
-      JSON.stringify({ gameId: 'legacy', sessionToken: 'legacy-secret' }),
+      JSON.stringify({
+        gameId: 'legacy',
+        playerName: 'Legacy Ada',
+        character: 'elf',
+        savedAt: now,
+      }),
     );
 
     expect(createStorage().loadActiveGame()).toBeNull();
+    expect(createStorage().loadLegacyGame()).toEqual({
+      gameId: 'legacy',
+      playerName: 'Legacy Ada',
+      character: 'elf',
+      savedAt: now,
+    });
+    expect(createStorage().loadPreferences()).toEqual({
+      playerName: 'Legacy Ada',
+      character: 'elf',
+    });
+    expect(values.has(LEGACY_ACTIVE_GAME_KEY)).toBe(true);
+
+    createStorage().clearLegacyGame();
     expect(values.has(LEGACY_ACTIVE_GAME_KEY)).toBe(false);
   });
 

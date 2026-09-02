@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import type { GameTransition } from '@dungeon-crawler/domain';
 import { BSON, type Db, MongoClient } from 'mongodb';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { LeaderboardDoc, StoredGameDocument } from '@/types/database.js';
+import type {
+  LeaderboardDoc,
+  LegacyGameDocument,
+  StoredGameDocument,
+} from '@/types/database.js';
 import { createGameCommandService } from './gameCommandService.js';
 
 const runIntegration = process.env.RUN_MONGODB_INTEGRATION === '1';
@@ -116,6 +120,37 @@ integration('MongoDB game command integration', () => {
     expect(storedBsonBytes).toBeLessThan(16 * 1024 * 1024);
     expect(stored?.revision).toBe(1);
     expect(stored?.actionReceipts).toHaveLength(1);
+    expect(stored?.actionReceipts[0]).not.toHaveProperty('result');
+  });
+
+  it('atomically migrates an exact root-level legacy game document once', async () => {
+    const commandService = service();
+    const created = await commandService.createGameSession({
+      playerName: 'Legacy Mongo Ada',
+      character: 'elf',
+    });
+    const stored = await database
+      .collection<StoredGameDocument>('games')
+      .findOne({ _id: created.gameId });
+    if (!stored) throw new Error('Expected a stored game document');
+    await database
+      .collection<LegacyGameDocument>('games')
+      .replaceOne({ _id: created.gameId }, stored.game);
+
+    const migrated = await commandService.migrateLegacyGame(created.gameId);
+
+    expect(migrated).toMatchObject({
+      gameId: created.gameId,
+      revision: 0,
+      state: { _id: created.gameId, status: 'active' },
+    });
+    const envelope = await database
+      .collection<StoredGameDocument>('games')
+      .findOne({ _id: created.gameId });
+    expect(envelope).toMatchObject({ schemaVersion: 1, revision: 0 });
+    await expect(
+      commandService.migrateLegacyGame(created.gameId),
+    ).rejects.toMatchObject({ code: 'GAME_NOT_FOUND' });
   });
 
   it('enforces retained action identity across games with a real unique multikey index', async () => {

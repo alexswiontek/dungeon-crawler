@@ -19,6 +19,9 @@ const credential = { gameId: 'gateway-game', sessionToken: 'gateway-secret' };
 describe('GameGateway', () => {
   let transport: {
     createGame: ReturnType<typeof vi.fn<GameTransport['createGame']>>;
+    migrateLegacyGame: ReturnType<
+      typeof vi.fn<GameTransport['migrateLegacyGame']>
+    >;
     loadGame: ReturnType<typeof vi.fn<GameTransport['loadGame']>>;
     executeAction: ReturnType<typeof vi.fn<GameTransport['executeAction']>>;
     abandonGame: ReturnType<typeof vi.fn<GameTransport['abandonGame']>>;
@@ -30,6 +33,9 @@ describe('GameGateway', () => {
     clearActiveGame: ReturnType<
       typeof vi.fn<ActiveGameStorage['clearActiveGame']>
     >;
+    clearLegacyGame: ReturnType<
+      typeof vi.fn<ActiveGameStorage['clearLegacyGame']>
+    >;
   };
   let actionNumber: number;
   let now: number;
@@ -39,13 +45,15 @@ describe('GameGateway', () => {
     now = 1_000;
     transport = {
       createGame: vi.fn(),
+      migrateLegacyGame: vi.fn(),
       loadGame: vi.fn(),
       executeAction: vi.fn(),
       abandonGame: vi.fn(),
     };
     storage = {
-      saveActiveGame: vi.fn(),
+      saveActiveGame: vi.fn().mockReturnValue(true),
       clearActiveGame: vi.fn(),
+      clearLegacyGame: vi.fn(),
     };
   });
 
@@ -82,6 +90,46 @@ describe('GameGateway', () => {
     await restored.loadGame();
     expect(transport.loadGame).toHaveBeenCalledWith(credential);
     expect(restored.getSnapshot().lifecycle.kind).toBe('playing');
+  });
+
+  it('promotes a legacy game and removes its old record only after credentials are stored', async () => {
+    transport.migrateLegacyGame.mockResolvedValue({
+      gameId: credential.gameId,
+      sessionToken: credential.sessionToken,
+      revision: 0,
+      state: visibleState(),
+    });
+    const gateway = createGateway();
+
+    await gateway.migrateLegacyGame(credential.gameId);
+
+    expect(transport.migrateLegacyGame).toHaveBeenCalledWith(credential.gameId);
+    expect(storage.saveActiveGame).toHaveBeenCalledWith(credential);
+    expect(storage.clearLegacyGame).toHaveBeenCalledOnce();
+    expect(gateway.getSnapshot().lifecycle.kind).toBe('playing');
+  });
+
+  it('does not apply an action response older than the current model', async () => {
+    transport.loadGame.mockResolvedValueOnce({
+      revision: 2,
+      state: visibleState({ revision: 2 }),
+    });
+    const gateway = createGateway(credential);
+    await gateway.loadGame();
+    transport.executeAction.mockResolvedValueOnce({
+      actionId: 'action-1',
+      revision: 1,
+      state: visibleState({ revision: 1 }),
+      events: [],
+      deltas: [],
+    });
+
+    void gateway.execute({ type: 'attack' });
+
+    await vi.waitFor(() => {
+      expect(gateway.getSnapshot().lifecycle.kind).toBe('retry-required');
+    });
+    expect(gateway.getModel().getSnapshot().revision).toBe(2);
   });
 
   it('dispatches three rapid inputs as first and latest with sequential revisions', async () => {

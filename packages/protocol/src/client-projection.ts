@@ -53,7 +53,7 @@ export function projectGameState(
       .filter((enemy) => enemy.hp > 0 && state.visibleNow[enemy.y]?.[enemy.x])
       .map(cloneEnemy),
     visibleItems: state.items
-      .filter((item) => state.visibleNow[item.y]?.[item.x])
+      .filter((item) => state.explored[item.y]?.[item.x])
       .map(cloneItem),
     explored: state.explored.map((row) => [...row]),
     visibleNow: state.visibleNow.map((row) => [...row]),

@@ -1,4 +1,4 @@
-// Renderer - Canvas 2D rendering with RAF loop
+// Renderer - demand-driven Canvas 2D rendering
 
 import {
   type Coordinate,
@@ -40,23 +40,58 @@ export interface RendererConfig {
   tileScale: number;
 }
 
+interface FirstFrameDeferred {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+  settled: boolean;
+}
+
+function createFirstFrameDeferred(): FirstFrameDeferred {
+  let resolvePromise!: () => void;
+  let rejectPromise!: (error: unknown) => void;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  return {
+    promise,
+    resolve: resolvePromise,
+    reject: rejectPromise,
+    settled: false,
+  };
+}
+
+function rendererStoppedError(): Error {
+  const error = new Error('Renderer stopped before its first frame completed');
+  error.name = 'AbortError';
+  return error;
+}
+
 export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private assets: AssetManagerClass;
   private model: GameClientModel;
-  private rafId = 0;
+  private rafId: number | null = null;
   private running = false;
+  private dirty = false;
+  private drawing = false;
+  private generation = 0;
+  private unsubscribe: (() => void) | null = null;
+  private lastObservedVersion = -1;
+  private firstFrame: FirstFrameDeferred | null = null;
+  private renderingSnapshot: GameClientSnapshot | null = null;
 
   // Viewport configuration
   private viewportTilesX = MAP_WIDTH;
   private viewportTilesY = MAP_HEIGHT;
+  private tileScale = 1;
 
   // Camera position (top-left tile coords)
   private cameraX = 0;
   private cameraY = 0;
 
-  // Damaged entities for flash effect (stored as array for Zustand compatibility)
-  private damagedEntities: string[] = [];
+  private damagedEntities = new Set<string>();
 
   // Off-screen canvas for tinted sprites
   private tintCanvas: HTMLCanvasElement;
@@ -92,46 +127,122 @@ export class Renderer {
   /**
    * Update viewport configuration.
    */
-  setViewport(viewportTiles: Coordinate, _tileScale: number): void {
+  setViewport(viewportTiles: Coordinate, tileScale: number): void {
+    if (
+      this.viewportTilesX === viewportTiles.x &&
+      this.viewportTilesY === viewportTiles.y &&
+      this.tileScale === tileScale
+    ) {
+      return;
+    }
     this.viewportTilesX = viewportTiles.x;
     this.viewportTilesY = viewportTiles.y;
-    // tileScale is handled by CSS, not the canvas internal rendering
+    this.tileScale = tileScale;
+    this.invalidate();
   }
 
   /**
    * Update damaged entities for flash effect.
    */
   setDamagedEntities(entities: string[]): void {
-    this.damagedEntities = entities;
+    const nextEntities = new Set(entities);
+    if (
+      nextEntities.size === this.damagedEntities.size &&
+      [...nextEntities].every((entity) => this.damagedEntities.has(entity))
+    ) {
+      return;
+    }
+    this.damagedEntities = nextEntities;
+    this.invalidate();
   }
 
   /**
-   * Start the render loop.
+   * Start rendering and resolve after the first completed frame.
    */
-  start(): void {
-    if (this.running) return;
+  start(): Promise<void> {
+    if (this.running && this.firstFrame) return this.firstFrame.promise;
+
     this.running = true;
-    this.loop();
+    this.generation += 1;
+    this.lastObservedVersion = this.model.getSnapshot().version;
+    this.firstFrame = createFirstFrameDeferred();
+    this.unsubscribe = this.model.subscribe(this.handleModelChange);
+    this.invalidate();
+    return this.firstFrame.promise;
   }
 
   /**
-   * Stop the render loop.
+   * Stop rendering.
    */
   stop(): void {
+    if (!this.running && !this.unsubscribe && this.rafId === null) return;
+
     this.running = false;
-    if (this.rafId) {
+    this.generation += 1;
+    this.dirty = false;
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+    if (this.rafId !== null) {
       cancelAnimationFrame(this.rafId);
-      this.rafId = 0;
+      this.rafId = null;
+    }
+    this.rejectFirstFrame(rendererStoppedError());
+  }
+
+  private handleModelChange = (): void => {
+    const version = this.model.getSnapshot().version;
+    if (version === this.lastObservedVersion) return;
+    this.lastObservedVersion = version;
+    this.invalidate();
+  };
+
+  private invalidate(): void {
+    if (!this.running) return;
+    this.dirty = true;
+    if (this.rafId === null && !this.drawing) this.scheduleFrame();
+  }
+
+  private scheduleFrame(): void {
+    const generation = this.generation;
+    this.rafId = requestAnimationFrame(() => this.drawFrame(generation));
+  }
+
+  private drawFrame(generation: number): void {
+    if (!this.running || generation !== this.generation) return;
+
+    this.rafId = null;
+    if (!this.dirty) return;
+    this.dirty = false;
+    this.drawing = true;
+    this.renderingSnapshot = this.model.getSnapshot();
+    try {
+      this.render();
+      this.resolveFirstFrame();
+    } catch (error) {
+      this.rejectFirstFrame(error);
+      this.stop();
+      return;
+    } finally {
+      this.renderingSnapshot = null;
+      this.drawing = false;
+    }
+
+    if (this.running && this.dirty && this.rafId === null) {
+      this.scheduleFrame();
     }
   }
 
-  private loop = (): void => {
-    if (!this.running) return;
+  private resolveFirstFrame(): void {
+    if (!this.firstFrame || this.firstFrame.settled) return;
+    this.firstFrame.settled = true;
+    this.firstFrame.resolve();
+  }
 
-    this.render();
-
-    this.rafId = requestAnimationFrame(this.loop);
-  };
+  private rejectFirstFrame(error: unknown): void {
+    if (!this.firstFrame || this.firstFrame.settled) return;
+    this.firstFrame.settled = true;
+    this.firstFrame.reject(error);
+  }
 
   private render(): void {
     // Update camera to center on player
@@ -160,7 +271,7 @@ export class Renderer {
   }
 
   private get state(): GameClientSnapshot {
-    return this.model.getSnapshot();
+    return this.renderingSnapshot ?? this.model.getSnapshot();
   }
 
   private updateCamera(): void {
@@ -219,7 +330,7 @@ export class Renderer {
       // Skip if not in viewport
       if (!this.isInViewport(item.x, item.y)) continue;
 
-      if (!this.state.visibleNow[item.y]?.[item.x]) continue;
+      if (!this.state.explored[item.y]?.[item.x]) continue;
 
       const screenX = (item.x - this.cameraX) * TILE_SIZE;
       const screenY = (item.y - this.cameraY) * TILE_SIZE;
@@ -258,7 +369,7 @@ export class Renderer {
       const tint = needsTint ? VARIANT_TINTS[enemy.variant || 'normal'] : null;
 
       // Check if damaged for flash effect
-      const isDamaged = this.damagedEntities.includes(enemy.id);
+      const isDamaged = this.damagedEntities.has(enemy.id);
 
       this.drawSprite(
         'monsters',
@@ -285,7 +396,7 @@ export class Renderer {
       CHARACTER_SPRITES[this.state.player.character] || CHARACTER_SPRITES.dwarf;
 
     // Check if damaged for flash effect
-    const isDamaged = this.damagedEntities.includes('player');
+    const isDamaged = this.damagedEntities.has('player');
 
     // Flip sprite based on facing direction
     const flipX = this.state.player.facingDirection === 'right';

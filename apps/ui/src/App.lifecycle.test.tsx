@@ -9,6 +9,7 @@ import App from '@/App';
 import {
   ACTIVE_GAME_CREDENTIAL_KEY,
   ACTIVE_GAME_METADATA_KEY,
+  LEGACY_ACTIVE_GAME_KEY,
 } from '@/game/GameSessionStorage';
 import { StoreHelpers } from '@/test/helpers/storeHelpers';
 
@@ -61,58 +62,105 @@ describe('application lifecycle', () => {
     ).toBeTruthy();
   });
 
+  it('migrates an exact legacy record before removing its only game identifier', async () => {
+    stored.set(
+      LEGACY_ACTIVE_GAME_KEY,
+      JSON.stringify({
+        gameId: 'legacy-game',
+        playerName: 'Legacy Ada',
+        character: 'elf',
+        savedAt: Date.now(),
+      }),
+    );
+    const active = StoreHelpers.visibleGameState({ _id: 'legacy-game' });
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      jsonResponse({
+        gameId: 'legacy-game',
+        sessionToken: 'migrated-secret',
+        revision: 0,
+        state: active,
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole('application', {
+        name: 'Dungeon Crawler game',
+      }),
+    ).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/games/legacy-game/migrate',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          [GAMEPLAY_PROTOCOL_HEADER]: GAMEPLAY_PROTOCOL_VERSION,
+        }),
+      }),
+    );
+    expect(stored.has(LEGACY_ACTIVE_GAME_KEY)).toBe(false);
+    expect(stored.has(ACTIVE_GAME_METADATA_KEY)).toBe(true);
+    expect(stored.has(ACTIVE_GAME_CREDENTIAL_KEY)).toBe(true);
+  });
+
   it.each([
     ['UNAUTHORIZED', 401],
     ['GAME_NOT_FOUND', 404],
-  ] as const)('clears an invalid restored session for %s', async (code, status) => {
-    saveCredentialPair();
-    vi.stubGlobal(
-      'fetch',
-      vi
-        .fn<typeof fetch>()
-        .mockResolvedValueOnce(
-          jsonResponse({ error: 'Unavailable', code }, status),
+  ] as const)(
+    'clears an invalid restored session for %s',
+    async (code, status) => {
+      saveCredentialPair();
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn<typeof fetch>()
+          .mockResolvedValueOnce(
+            jsonResponse({ error: 'Unavailable', code }, status),
+          ),
+      );
+
+      render(<App />);
+
+      expect(
+        await screen.findByText(
+          'That saved game is no longer available. Start a new game.',
         ),
-    );
+      ).toBeTruthy();
+      expect(stored.has(ACTIVE_GAME_METADATA_KEY)).toBe(false);
+      expect(stored.has(ACTIVE_GAME_CREDENTIAL_KEY)).toBe(false);
+    },
+  );
 
-    render(<App />);
+  it.each(['dead', 'won'] as const)(
+    'restores a %s game to its terminal screen',
+    async (status) => {
+      saveCredentialPair();
+      const terminal = StoreHelpers.visibleGameState({
+        _id: 'saved-game',
+        revision: 8,
+        status,
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn<typeof fetch>()
+          .mockResolvedValueOnce(
+            jsonResponse({ revision: 8, state: terminal }),
+          ),
+      );
 
-    expect(
-      await screen.findByText(
-        'That saved game is no longer available. Start a new game.',
-      ),
-    ).toBeTruthy();
-    expect(stored.has(ACTIVE_GAME_METADATA_KEY)).toBe(false);
-    expect(stored.has(ACTIVE_GAME_CREDENTIAL_KEY)).toBe(false);
-  });
+      render(<App />);
 
-  it.each([
-    'dead',
-    'won',
-  ] as const)('restores a %s game to its terminal screen', async (status) => {
-    saveCredentialPair();
-    const terminal = StoreHelpers.visibleGameState({
-      _id: 'saved-game',
-      revision: 8,
-      status,
-    });
-    vi.stubGlobal(
-      'fetch',
-      vi
-        .fn<typeof fetch>()
-        .mockResolvedValueOnce(jsonResponse({ revision: 8, state: terminal })),
-    );
-
-    render(<App />);
-
-    expect(
-      await screen.findByRole('heading', {
-        name: status === 'won' ? 'Victory!' : 'Game Over',
-      }),
-    ).toBeTruthy();
-    expect(stored.has(ACTIVE_GAME_METADATA_KEY)).toBe(false);
-    expect(stored.has(ACTIVE_GAME_CREDENTIAL_KEY)).toBe(false);
-  });
+      expect(
+        await screen.findByRole('heading', {
+          name: status === 'won' ? 'Victory!' : 'Game Over',
+        }),
+      ).toBeTruthy();
+      expect(stored.has(ACTIVE_GAME_METADATA_KEY)).toBe(false);
+      expect(stored.has(ACTIVE_GAME_CREDENTIAL_KEY)).toBe(false);
+    },
+  );
 
   it('blocks an incompatible tab without deleting its valid credential pair', async () => {
     saveCredentialPair();

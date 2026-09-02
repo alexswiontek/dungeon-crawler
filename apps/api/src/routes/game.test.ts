@@ -36,6 +36,7 @@ vi.mock('@/services/database.js', () => ({
 
 vi.mock('@/services/gameCommandService.js', () => ({
   createGameSession: vi.fn(),
+  migrateLegacyGame: vi.fn(),
   readGame: vi.fn(),
   executeGameCommand: vi.fn(),
   deleteGame: vi.fn(),
@@ -50,6 +51,9 @@ describe('canonical HTTP game routes', () => {
 
   beforeAll(async () => {
     fastify = Fastify().withTypeProvider<ZodTypeProvider>();
+    fastify.addHook('onRequest', async (request) => {
+      request.headers[GAMEPLAY_PROTOCOL_HEADER] ??= GAMEPLAY_PROTOCOL_VERSION;
+    });
     fastify.setValidatorCompiler(validatorCompiler);
     fastify.setSerializerCompiler(serializerCompiler);
     await fastify.register(gameRoutes);
@@ -62,6 +66,12 @@ describe('canonical HTTP game routes', () => {
   beforeEach(() => {
     vi.mocked(database.isDatabaseHealthy).mockResolvedValue(true);
     vi.mocked(commands.createGameSession).mockResolvedValue({
+      gameId: 'route-game',
+      sessionToken: TOKEN,
+      revision: 0,
+      state,
+    });
+    vi.mocked(commands.migrateLegacyGame).mockResolvedValue({
       gameId: 'route-game',
       sessionToken: TOKEN,
       revision: 0,
@@ -109,6 +119,49 @@ describe('canonical HTTP game routes', () => {
     });
   });
 
+  it('migrates a legacy game through a one-time pre-authentication route', async () => {
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/games/route-game/migrate',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(NewGameResponseSchema.parse(response.json())).toMatchObject({
+      gameId: 'route-game',
+      sessionToken: TOKEN,
+      revision: 0,
+    });
+    expect(commands.migrateLegacyGame).toHaveBeenCalledWith('route-game');
+  });
+
+  it('rejects a missing protocol version before creating or migrating a game', async () => {
+    const app = Fastify().withTypeProvider<ZodTypeProvider>();
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    await app.register(gameRoutes);
+    vi.mocked(commands.createGameSession).mockClear();
+    vi.mocked(commands.migrateLegacyGame).mockClear();
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/games',
+        payload: { playerName: 'Ada', character: 'wizard' },
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.headers[GAMEPLAY_PROTOCOL_HEADER]).toBe(
+        GAMEPLAY_PROTOCOL_VERSION,
+      );
+      expect(GameErrorResponseSchema.parse(response.json())).toMatchObject({
+        code: 'PROTOCOL_MISMATCH',
+      });
+      expect(commands.createGameSession).not.toHaveBeenCalled();
+      expect(commands.migrateLegacyGame).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
   it('reads with 200, bearer authentication, and no repeated credential', async () => {
     const response = await fastify.inject({
       method: 'GET',
@@ -132,32 +185,35 @@ describe('canonical HTTP game routes', () => {
     ['movement', { type: 'move', direction: 'right' }],
     ['ranged attack', { type: 'attack' }],
     ['floor descent', { type: 'descend' }],
-  ] as const)('routes %s through executeGameCommand exactly once with all five concepts', async (_name, command) => {
-    const response = await fastify.inject({
-      method: 'POST',
-      url: '/games/route-game/actions',
-      headers: { authorization: `Bearer ${TOKEN}` },
-      payload: {
+  ] as const)(
+    'routes %s through executeGameCommand exactly once with all five concepts',
+    async (_name, command) => {
+      const response = await fastify.inject({
+        method: 'POST',
+        url: '/games/route-game/actions',
+        headers: { authorization: `Bearer ${TOKEN}` },
+        payload: {
+          actionId: 'action-1',
+          expectedRevision: 4,
+          command,
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers[GAMEPLAY_PROTOCOL_HEADER]).toBe(
+        GAMEPLAY_PROTOCOL_VERSION,
+      );
+      expect(GameCommandResultSchema.parse(response.json()).revision).toBe(5);
+      expect(commands.executeGameCommand).toHaveBeenCalledOnce();
+      expect(commands.executeGameCommand).toHaveBeenCalledWith({
+        gameId: 'route-game',
+        sessionToken: TOKEN,
         actionId: 'action-1',
         expectedRevision: 4,
         command,
-      },
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.headers[GAMEPLAY_PROTOCOL_HEADER]).toBe(
-      GAMEPLAY_PROTOCOL_VERSION,
-    );
-    expect(GameCommandResultSchema.parse(response.json()).revision).toBe(5);
-    expect(commands.executeGameCommand).toHaveBeenCalledOnce();
-    expect(commands.executeGameCommand).toHaveBeenCalledWith({
-      gameId: 'route-game',
-      sessionToken: TOKEN,
-      actionId: 'action-1',
-      expectedRevision: 4,
-      command,
-    });
-  });
+      });
+    },
+  );
 
   it('deletes with bearer authentication and an empty 204 response', async () => {
     const response = await fastify.inject({
@@ -266,20 +322,23 @@ describe('canonical HTTP game routes', () => {
       command: { type: 'attack' },
       sessionToken: TOKEN,
     },
-  ])('rejects an invalid action body without calling the service', async (payload) => {
-    const response = await fastify.inject({
-      method: 'POST',
-      url: '/games/route-game/actions',
-      headers: { authorization: `Bearer ${TOKEN}` },
-      payload,
-    });
+  ])(
+    'rejects an invalid action body without calling the service',
+    async (payload) => {
+      const response = await fastify.inject({
+        method: 'POST',
+        url: '/games/route-game/actions',
+        headers: { authorization: `Bearer ${TOKEN}` },
+        payload,
+      });
 
-    expect(response.statusCode).toBe(400);
-    expect(GameErrorResponseSchema.parse(response.json()).code).toBe(
-      'INVALID_COMMAND',
-    );
-    expect(commands.executeGameCommand).not.toHaveBeenCalled();
-  });
+      expect(response.statusCode).toBe(400);
+      expect(GameErrorResponseSchema.parse(response.json()).code).toBe(
+        'INVALID_COMMAND',
+      );
+      expect(commands.executeGameCommand).not.toHaveBeenCalled();
+    },
+  );
 
   it('returns a typed conflict with safe synchronization state', async () => {
     vi.mocked(commands.executeGameCommand).mockRejectedValueOnce(
@@ -320,28 +379,31 @@ describe('canonical HTTP game routes', () => {
     ['RATE_LIMITED', 429],
     ['DATABASE_UNAVAILABLE', 503],
     ['DATABASE_ERROR', 503],
-  ] as const)('maps %s to %s with a schema-valid safe body', async (code, status) => {
-    vi.mocked(commands.executeGameCommand).mockRejectedValueOnce(
-      new GameServiceError(code, 'Safe failure'),
-    );
-    const response = await fastify.inject({
-      method: 'POST',
-      url: '/games/route-game/actions',
-      headers: { authorization: `Bearer ${TOKEN}` },
-      payload: {
-        actionId: 'action-1',
-        expectedRevision: 0,
-        command: { type: 'attack' },
-      },
-    });
+  ] as const)(
+    'maps %s to %s with a schema-valid safe body',
+    async (code, status) => {
+      vi.mocked(commands.executeGameCommand).mockRejectedValueOnce(
+        new GameServiceError(code, 'Safe failure'),
+      );
+      const response = await fastify.inject({
+        method: 'POST',
+        url: '/games/route-game/actions',
+        headers: { authorization: `Bearer ${TOKEN}` },
+        payload: {
+          actionId: 'action-1',
+          expectedRevision: 0,
+          command: { type: 'attack' },
+        },
+      });
 
-    expect(response.statusCode).toBe(status);
-    expect(GameErrorResponseSchema.parse(response.json())).toMatchObject({
-      code,
-      error: 'Safe failure',
-    });
-    expect(response.json()).not.toHaveProperty('stack');
-  });
+      expect(response.statusCode).toBe(status);
+      expect(GameErrorResponseSchema.parse(response.json())).toMatchObject({
+        code,
+        error: 'Safe failure',
+      });
+      expect(response.json()).not.toHaveProperty('stack');
+    },
+  );
 
   it('does not retain the obsolete game routes', async () => {
     const responses = await Promise.all([
@@ -415,10 +477,52 @@ describe('canonical HTTP game routes', () => {
       await limitedApp.close();
     }
   });
+
+  it('rate-limits forwarded clients independently behind one trusted proxy', async () => {
+    const app = Fastify({
+      trustProxy: true,
+    }).withTypeProvider<ZodTypeProvider>();
+    app.addHook('onRequest', async (request) => {
+      request.headers[GAMEPLAY_PROTOCOL_HEADER] ??= GAMEPLAY_PROTOCOL_VERSION;
+    });
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    await app.register(rateLimit, {
+      global: true,
+      max: 1,
+      timeWindow: '1 minute',
+    });
+    await app.register(gameRoutes);
+    try {
+      const first = await app.inject({
+        method: 'GET',
+        url: '/games/route-game',
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          'x-forwarded-for': '198.51.100.1',
+        },
+      });
+      const second = await app.inject({
+        method: 'GET',
+        url: '/games/route-game',
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          'x-forwarded-for': '198.51.100.2',
+        },
+      });
+
+      expect([first.statusCode, second.statusCode]).toEqual([200, 200]);
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 async function createRateLimitedTestApp(max: number): Promise<FastifyInstance> {
   const app = Fastify().withTypeProvider<ZodTypeProvider>();
+  app.addHook('onRequest', async (request) => {
+    request.headers[GAMEPLAY_PROTOCOL_HEADER] ??= GAMEPLAY_PROTOCOL_VERSION;
+  });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   await app.register(rateLimit, { global: true, max, timeWindow: '1 minute' });

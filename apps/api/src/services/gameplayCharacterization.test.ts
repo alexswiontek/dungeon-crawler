@@ -249,12 +249,22 @@ describe('pre-modernization gameplay characterization', () => {
       expect(projection).not.toHaveProperty('map');
     });
 
-    it('keeps explored terrain while hiding entities outside visibleNow', () => {
+    it('keeps explored terrain and items while hiding enemies outside visibleNow', () => {
       const state = createTestGameState({
         player: createTestPlayer({ x: 20, y: 10 }),
       });
       const enemy = createTestEnemy('rat', { x: 5, y: 5 });
       state.enemies = [enemy];
+      state.items = [
+        {
+          id: 'remembered-item',
+          type: 'health_potion',
+          name: 'Remembered Potion',
+          x: 5,
+          y: 5,
+          value: 10,
+        },
+      ];
       state.explored[5][5] = true;
       state.visibleNow[5][5] = false;
 
@@ -262,6 +272,7 @@ describe('pre-modernization gameplay characterization', () => {
       expect(getVisibleState(state).visibleTiles).toContainEqual(
         state.map[5][5],
       );
+      expect(getVisibleState(state).visibleItems).toEqual(state.items);
     });
 
     it('projects an enemy that becomes visible after a ranged turn', () => {

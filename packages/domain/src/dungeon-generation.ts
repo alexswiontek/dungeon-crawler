@@ -36,6 +36,36 @@ function roomsOverlap(a: Room, b: Room): boolean {
   );
 }
 
+function coordinateKey(coordinate: Coordinate): string {
+  return `${coordinate.x},${coordinate.y}`;
+}
+
+function roomCoordinates(rooms: Room[]): Coordinate[] {
+  return rooms.flatMap((room) =>
+    Array.from({ length: room.height }, (_, yOffset) =>
+      Array.from({ length: room.width }, (_, xOffset) => ({
+        x: room.x + xOffset,
+        y: room.y + yOffset,
+      })),
+    ).flat(),
+  );
+}
+
+export function takeUnoccupiedCoordinate(
+  candidates: readonly Coordinate[],
+  occupied: Set<string>,
+  random: RandomSource,
+): Coordinate | undefined {
+  const eligible = candidates.filter(
+    (coordinate) => !occupied.has(coordinateKey(coordinate)),
+  );
+  if (eligible.length === 0) return undefined;
+
+  const selected = eligible[random.integer(0, eligible.length - 1)];
+  occupied.add(coordinateKey(selected));
+  return selected;
+}
+
 export function generateDungeon(
   floor: number,
   character: CharacterType,
@@ -110,7 +140,14 @@ export function generateDungeon(
   }
 
   const playerStart = center(rooms[0]);
-  const stairs = center(rooms[rooms.length - 1]);
+  const occupied = new Set<string>([coordinateKey(playerStart)]);
+  const preferredStairs = center(rooms[rooms.length - 1]);
+  const stairs =
+    takeUnoccupiedCoordinate([preferredStairs], occupied, random) ??
+    takeUnoccupiedCoordinate(roomCoordinates(rooms), occupied, random);
+  if (!stairs) {
+    throw new Error('Generated dungeon has no distinct coordinate for stairs');
+  }
   map[stairs.y][stairs.x] = { type: 'stairs', x: stairs.x, y: stairs.y };
 
   const enemyTypes: EnemyType[] = ['rat', 'skeleton', 'orc', 'dragon'];
@@ -120,23 +157,43 @@ export function generateDungeon(
   );
   const enemies: Enemy[] = [];
   const enemyCount = random.integer(3, 5) + Math.floor(floor / 2);
+  const enemyCoordinates = roomCoordinates(rooms.slice(1));
   for (let index = 0; index < enemyCount && rooms.length > 1; index++) {
-    const room = rooms[random.integer(1, rooms.length - 1)];
-    const x = random.integer(room.x, room.x + room.width - 1);
-    const y = random.integer(room.y, room.y + room.height - 1);
+    const coordinate = takeUnoccupiedCoordinate(
+      enemyCoordinates,
+      occupied,
+      random,
+    );
+    if (!coordinate) break;
     const type = availableTypes[random.integer(0, availableTypes.length - 1)];
-    enemies.push(createEnemy(random.id('enemy'), type, x, y, floor, random));
+    enemies.push(
+      createEnemy(
+        random.id('enemy'),
+        type,
+        coordinate.x,
+        coordinate.y,
+        floor,
+        random,
+      ),
+    );
   }
 
   const items: Item[] = [];
-  for (let index = 0; index < random.integer(1, 3); index++) {
-    const room = rooms[random.integer(0, rooms.length - 1)];
+  const itemCoordinates = roomCoordinates(rooms);
+  const potionCount = random.integer(1, 3);
+  for (let index = 0; index < potionCount; index++) {
+    const coordinate = takeUnoccupiedCoordinate(
+      itemCoordinates,
+      occupied,
+      random,
+    );
+    if (!coordinate) break;
     items.push({
       id: random.id('item'),
       type: 'health_potion',
       name: 'Health Potion',
-      x: random.integer(room.x, room.x + room.width - 1),
-      y: random.integer(room.y, room.y + room.height - 1),
+      x: coordinate.x,
+      y: coordinate.y,
       value: 10,
     });
   }
@@ -154,15 +211,20 @@ export function generateDungeon(
     index < equipmentCount && availableEquipment.length > 0;
     index++
   ) {
-    const room = rooms[random.integer(0, rooms.length - 1)];
+    const coordinate = takeUnoccupiedCoordinate(
+      itemCoordinates,
+      occupied,
+      random,
+    );
+    if (!coordinate) break;
     const equipment =
       availableEquipment[random.integer(0, availableEquipment.length - 1)];
     const item: EquipmentItem = {
       id: random.id('item'),
       type: 'equipment',
       name: equipment.name,
-      x: random.integer(room.x, room.x + room.width - 1),
-      y: random.integer(room.y, room.y + room.height - 1),
+      x: coordinate.x,
+      y: coordinate.y,
       value: 0,
       equipment,
     };

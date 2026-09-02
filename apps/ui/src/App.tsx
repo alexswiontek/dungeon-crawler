@@ -16,6 +16,7 @@ type AppLifecycle =
   | {
       readonly kind: 'restore-failed';
       readonly gateway: GameGateway;
+      readonly legacyGameId?: string;
       readonly message: string;
     }
   | { readonly kind: 'game'; readonly gateway: GameGateway }
@@ -82,6 +83,46 @@ function App() {
     [],
   );
 
+  const migrateLegacyGateway = useCallback(
+    async (gateway: GameGateway, gameId: string): Promise<void> => {
+      setLifecycle({ kind: 'restoring' });
+      try {
+        const result = await gateway.migrateLegacyGame(gameId);
+        const status = result.model.getSnapshot().status;
+        if (status === 'dead' || status === 'won') {
+          setLifecycle({
+            kind: 'terminal',
+            state: result.model.getSnapshot(),
+            won: status === 'won',
+          });
+        } else {
+          setLifecycle({ kind: 'game', gateway });
+        }
+      } catch {
+        const gatewayLifecycle = gateway.getSnapshot().lifecycle;
+        if (gatewayLifecycle.kind === 'protocol-mismatch') {
+          setLifecycle({
+            kind: 'protocol-mismatch',
+            message: gatewayLifecycle.message,
+          });
+        } else if (gatewayLifecycle.kind === 'session-invalid') {
+          setLifecycle({ kind: 'start', message: gatewayLifecycle.message });
+        } else {
+          setLifecycle({
+            kind: 'restore-failed',
+            gateway,
+            legacyGameId: gameId,
+            message:
+              gatewayLifecycle.kind === 'load-failed'
+                ? gatewayLifecycle.message
+                : 'The saved game could not be migrated. Retry when the server is available.',
+          });
+        }
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     const preferences = storage.loadPreferences();
     if (preferences) {
@@ -90,13 +131,19 @@ function App() {
     }
 
     const credential = storage.loadActiveGame();
-    if (!credential) {
+    if (credential) {
+      const gateway = new GameGateway({ transport, storage, credential });
+      void restoreGateway(gateway);
+      return;
+    }
+    const legacy = storage.loadLegacyGame();
+    if (!legacy) {
       setLifecycle({ kind: 'start', message: null });
       return;
     }
-    const gateway = new GameGateway({ transport, storage, credential });
-    void restoreGateway(gateway);
-  }, [restoreGateway, storage, transport]);
+    const gateway = new GameGateway({ transport, storage });
+    void migrateLegacyGateway(gateway, legacy.gameId);
+  }, [migrateLegacyGateway, restoreGateway, storage, transport]);
 
   const handleStartGame = async (
     name: string,
@@ -205,7 +252,14 @@ function App() {
           <button
             type="button"
             className="mt-5"
-            onClick={() => void restoreGateway(lifecycle.gateway)}
+            onClick={() =>
+              lifecycle.legacyGameId
+                ? void migrateLegacyGateway(
+                    lifecycle.gateway,
+                    lifecycle.legacyGameId,
+                  )
+                : void restoreGateway(lifecycle.gateway)
+            }
           >
             Retry Load
           </button>

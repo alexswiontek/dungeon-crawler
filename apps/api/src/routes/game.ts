@@ -23,6 +23,7 @@ import {
   createGameSession,
   deleteGame,
   executeGameCommand,
+  migrateLegacyGame,
   readGame,
 } from '@/services/gameCommandService.js';
 import { isGameServiceError } from '@/types/gameServiceErrors.js';
@@ -84,6 +85,7 @@ function statusForError(code: GameErrorResponse['code']): number {
     case 'REVISION_CONFLICT':
     case 'ACTION_ID_REUSED':
     case 'GAME_FINISHED':
+    case 'PROTOCOL_MISMATCH':
       return 409;
     case 'RATE_LIMITED':
       return 429;
@@ -136,6 +138,17 @@ function sendHttpError(reply: FastifyReply, error: unknown, actionId?: string) {
 }
 
 export async function gameRoutes(fastify: FastifyInstance) {
+  fastify.addHook('onRequest', async (request, reply) => {
+    const version = request.headers[GAMEPLAY_PROTOCOL_HEADER];
+    if (version === GAMEPLAY_PROTOCOL_VERSION) return;
+    return reply.status(409).send(
+      GameErrorResponseSchema.parse({
+        error: 'This client is incompatible with the game server',
+        code: 'PROTOCOL_MISMATCH',
+      }),
+    );
+  });
+
   fastify.addHook('onSend', async (_request, reply) => {
     reply.header(GAMEPLAY_PROTOCOL_HEADER, GAMEPLAY_PROTOCOL_VERSION);
   });
@@ -210,6 +223,31 @@ export async function gameRoutes(fastify: FastifyInstance) {
           character: request.body.character as CharacterType,
         });
         return reply.status(201).send(response);
+      } catch (error) {
+        return sendHttpError(reply, error);
+      }
+    },
+  );
+
+  fastify.post<{ Params: { gameId: string } }>(
+    '/games/:gameId/migrate',
+    {
+      schema: {
+        response: { 200: NewGameResponseSchema, ...gameErrorResponses },
+      },
+    },
+    async (request, reply) => {
+      if (!(await isDatabaseHealthy())) {
+        return reply.status(503).send(
+          GameErrorResponseSchema.parse({
+            error: 'Database unavailable. Please try again later.',
+            code: 'DATABASE_UNAVAILABLE',
+          }),
+        );
+      }
+      try {
+        const response = await migrateLegacyGame(request.params.gameId);
+        return reply.status(200).send(response);
       } catch (error) {
         return sendHttpError(reply, error);
       }

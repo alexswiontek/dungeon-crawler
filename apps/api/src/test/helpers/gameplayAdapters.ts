@@ -52,7 +52,7 @@ export function getVisibleEnemies(state: GameState): Enemy[] {
 
 export function getVisibleItems(state: GameState): Item[] {
   return state.items.filter(
-    (item) => state.visibleNow[item.y]?.[item.x] === true,
+    (item) => state.explored[item.y]?.[item.x] === true,
   );
 }
 

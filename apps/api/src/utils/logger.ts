@@ -9,7 +9,7 @@ const isTest = process.env.NODE_ENV === 'test';
 
 // Create logger with environment-appropriate configuration
 export const logger = pino({
-  level: isTest ? 'silent' : isDevelopment ? 'info' : 'warn',
+  level: isTest ? 'silent' : 'info',
   transport: isDevelopment
     ? {
         target: 'pino-pretty',

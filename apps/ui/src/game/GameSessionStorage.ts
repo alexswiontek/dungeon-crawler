@@ -31,14 +31,29 @@ const PlayerPreferencesSchema = z.strictObject({
   character: z.enum(['dwarf', 'elf', 'bandit', 'wizard']),
 });
 
+const LegacyActiveGameSchema = z.object({
+  gameId: z.string().min(1),
+  playerName: z.string(),
+  character: z.enum(['dwarf', 'elf', 'bandit', 'wizard']).optional(),
+  savedAt: z.number().finite(),
+});
+
 export interface PlayerPreferences {
   readonly playerName: string;
   readonly character: CharacterType;
 }
 
+export interface LegacyActiveGame {
+  readonly gameId: string;
+  readonly playerName: string;
+  readonly character: CharacterType;
+  readonly savedAt: number;
+}
+
 export interface ActiveGameStorage {
-  saveActiveGame(credential: GameSessionCredential): void;
+  saveActiveGame(credential: GameSessionCredential): boolean;
   clearActiveGame(): void;
+  clearLegacyGame(): void;
 }
 
 interface GameSessionStorageOptions {
@@ -59,7 +74,6 @@ export class GameSessionStorage implements ActiveGameStorage {
   }
 
   loadActiveGame(): GameSessionCredential | null {
-    this.remove(LEGACY_ACTIVE_GAME_KEY);
     const metadataJson = this.get(ACTIVE_GAME_METADATA_KEY);
     const credentialJson = this.get(ACTIVE_GAME_CREDENTIAL_KEY);
     if (!metadataJson && !credentialJson) return null;
@@ -87,7 +101,28 @@ export class GameSessionStorage implements ActiveGameStorage {
     }
   }
 
-  saveActiveGame(credential: GameSessionCredential): void {
+  loadLegacyGame(): LegacyActiveGame | null {
+    const legacyJson = this.get(LEGACY_ACTIVE_GAME_KEY);
+    if (!legacyJson) return null;
+    try {
+      const legacy = LegacyActiveGameSchema.parse(JSON.parse(legacyJson));
+      if (this.now() - legacy.savedAt > this.ttlMs) {
+        this.clearLegacyGame();
+        return null;
+      }
+      return {
+        gameId: legacy.gameId,
+        playerName: legacy.playerName,
+        character: legacy.character ?? 'dwarf',
+        savedAt: legacy.savedAt,
+      };
+    } catch {
+      this.clearLegacyGame();
+      return null;
+    }
+  }
+
+  saveActiveGame(credential: GameSessionCredential): boolean {
     try {
       this.storage.setItem(
         ACTIVE_GAME_METADATA_KEY,
@@ -106,20 +141,39 @@ export class GameSessionStorage implements ActiveGameStorage {
           sessionToken: credential.sessionToken,
         }),
       );
+      return true;
     } catch {
       this.clearActiveGame();
+      return false;
     }
   }
 
   clearActiveGame(): void {
     this.remove(ACTIVE_GAME_METADATA_KEY);
     this.remove(ACTIVE_GAME_CREDENTIAL_KEY);
+  }
+
+  clearLegacyGame(): void {
     this.remove(LEGACY_ACTIVE_GAME_KEY);
   }
 
   loadPreferences(): PlayerPreferences | null {
     const value = this.get(PLAYER_PREFERENCES_KEY);
-    if (!value) return null;
+    if (!value) {
+      const legacyJson = this.get(LEGACY_ACTIVE_GAME_KEY);
+      if (!legacyJson) return null;
+      try {
+        const legacy = LegacyActiveGameSchema.parse(JSON.parse(legacyJson));
+        const preferences = {
+          playerName: legacy.playerName,
+          character: legacy.character ?? ('dwarf' as const),
+        };
+        this.savePreferences(preferences);
+        return preferences;
+      } catch {
+        return null;
+      }
+    }
     try {
       const parsed = PlayerPreferencesSchema.parse(JSON.parse(value));
       return {

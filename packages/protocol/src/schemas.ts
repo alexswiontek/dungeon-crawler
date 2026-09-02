@@ -224,6 +224,7 @@ export const GameErrorCodeSchema = z.enum([
   'DATABASE_ERROR',
   'RATE_LIMITED',
   'INVALID_PLAYER_NAME',
+  'PROTOCOL_MISMATCH',
 ]);
 
 export const GameErrorResponseSchema = z.strictObject({

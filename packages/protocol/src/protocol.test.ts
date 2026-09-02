@@ -77,7 +77,32 @@ function stateFixture(): GameState {
         behavior: 'aggressive',
       },
     ],
-    items: [],
+    items: [
+      {
+        id: 'remembered-item',
+        type: 'health_potion',
+        name: 'Remembered Potion',
+        x: 1,
+        y: 1,
+        value: 10,
+      },
+      {
+        id: 'visible-item',
+        type: 'health_potion',
+        name: 'Visible Potion',
+        x: 2,
+        y: 2,
+        value: 10,
+      },
+      {
+        id: 'unseen-item',
+        type: 'health_potion',
+        name: 'Unseen Potion',
+        x: 3,
+        y: 3,
+        value: 10,
+      },
+    ],
     explored,
     visibleNow,
     status: 'active',
@@ -131,6 +156,10 @@ describe('wire protocol', () => {
     expect(projection.visibleEnemies.map((enemy) => enemy.id)).toEqual([
       'visible',
     ]);
+    expect(projection.visibleItems.map((item) => item.id)).toEqual([
+      'remembered-item',
+      'visible-item',
+    ]);
     expect(projection).not.toHaveProperty('playerId');
     expect(projection).not.toHaveProperty('map');
     expect(projection.explored[1][1]).toBe(true);
@@ -153,6 +182,22 @@ describe('wire protocol', () => {
         }),
       ]),
     );
+  });
+
+  it('keeps an explored item when it leaves current visibility', () => {
+    const state = stateFixture();
+    const before = projectGameState(state);
+    state.visibleNow[2][2] = false;
+    const after = projectGameState(state);
+
+    expect(after.visibleItems.map((item) => item.id)).toEqual([
+      'remembered-item',
+      'visible-item',
+    ]);
+    expect(diffClientProjections(before, after, [])).not.toContainEqual({
+      type: 'item_removed',
+      itemId: 'visible-item',
+    });
   });
 
   it('defines strict create, read, action, and typed error responses', () => {
