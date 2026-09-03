@@ -116,7 +116,7 @@ describe('wire protocol', () => {
   it('defines one runtime-validated gameplay protocol version', () => {
     expect(GAMEPLAY_PROTOCOL_HEADER).toBe('x-dungeon-crawler-protocol-version');
     expect(GameplayProtocolVersionSchema.parse(GAMEPLAY_PROTOCOL_VERSION)).toBe(
-      '1',
+      '2',
     );
     expect(GameplayProtocolVersionSchema.safeParse('0').success).toBe(false);
   });

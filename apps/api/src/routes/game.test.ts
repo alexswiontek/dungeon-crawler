@@ -379,6 +379,7 @@ describe('canonical HTTP game routes', () => {
     ['RATE_LIMITED', 429],
     ['DATABASE_UNAVAILABLE', 503],
     ['DATABASE_ERROR', 503],
+    ['SERVICE_UNAVAILABLE', 503],
   ] as const)(
     'maps %s to %s with a schema-valid safe body',
     async (code, status) => {

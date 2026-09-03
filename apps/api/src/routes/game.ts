@@ -1,4 +1,5 @@
 import type { CharacterType } from '@dungeon-crawler/domain';
+import { performance } from 'node:perf_hooks';
 import {
   GAMEPLAY_PROTOCOL_HEADER,
   GAMEPLAY_PROTOCOL_VERSION,
@@ -91,6 +92,7 @@ function statusForError(code: GameErrorResponse['code']): number {
       return 429;
     case 'DATABASE_UNAVAILABLE':
     case 'DATABASE_ERROR':
+    case 'SERVICE_UNAVAILABLE':
       return 503;
   }
 }
@@ -138,7 +140,9 @@ function sendHttpError(reply: FastifyReply, error: unknown, actionId?: string) {
 }
 
 export async function gameRoutes(fastify: FastifyInstance) {
+  const requestStartedAt = new WeakMap<object, number>();
   fastify.addHook('onRequest', async (request, reply) => {
+    requestStartedAt.set(request, performance.now());
     const version = request.headers[GAMEPLAY_PROTOCOL_HEADER];
     if (version === GAMEPLAY_PROTOCOL_VERSION) return;
     return reply.status(409).send(
@@ -151,6 +155,20 @@ export async function gameRoutes(fastify: FastifyInstance) {
 
   fastify.addHook('onSend', async (_request, reply) => {
     reply.header(GAMEPLAY_PROTOCOL_HEADER, GAMEPLAY_PROTOCOL_VERSION);
+  });
+
+  fastify.addHook('onResponse', async (request, reply) => {
+    if (request.routeOptions.url !== '/games/:gameId/actions') return;
+    const startedAt = requestStartedAt.get(request);
+    if (startedAt === undefined) return;
+    fastify.log.info(
+      {
+        route: request.routeOptions.url,
+        statusCode: reply.statusCode,
+        responseDurationMs: Math.max(0, performance.now() - startedAt),
+      },
+      'Game command response sent',
+    );
   });
 
   fastify.setErrorHandler((error, request, reply) => {

@@ -6,7 +6,7 @@ import type {
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { GameGateway } from '@/game/GameGateway';
 import {
-  CommandSupersededError,
+  CommandQueueOverflowError,
   GatewayStateError,
   RetryNotReadyError,
 } from '@/game/GameGateway';
@@ -17,7 +17,7 @@ const ATTACK_COOLDOWN_MS = 400;
 
 function ignoreExpectedCommandError(error: unknown): void {
   if (
-    error instanceof CommandSupersededError ||
+    error instanceof CommandQueueOverflowError ||
     error instanceof GatewayStateError ||
     error instanceof RetryNotReadyError
   ) {

@@ -29,6 +29,15 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Check out repository
@@ -48,10 +57,11 @@ jobs:
       - name: Verify source
         run: pnpm verify
 
-      - name: Run MongoDB integration tests
+      - name: Run MongoDB and Redis integration tests
         run: pnpm test:integration
         env:
           MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?directConnection=true
+          REDIS_TEST_URL: redis://127.0.0.1:6379
 
       - name: Build production artifacts
         run: pnpm build

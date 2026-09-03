@@ -1,7 +1,7 @@
 import type { GameCommandResult } from '@dungeon-crawler/protocol';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  CommandSupersededError,
+  CommandQueueOverflowError,
   GameGateway,
   RetryNotReadyError,
 } from '@/game/GameGateway';
@@ -132,20 +132,23 @@ describe('GameGateway', () => {
     expect(gateway.getModel().getSnapshot().revision).toBe(2);
   });
 
-  it('dispatches three rapid inputs as first and latest with sequential revisions', async () => {
+  it('dispatches three rapid inputs in FIFO order with sequential revisions', async () => {
     const gateway = await loadedGateway();
     const firstResponse = deferred<GameCommandResult>();
     transport.executeAction
       .mockReturnValueOnce(firstResponse.promise)
       .mockImplementationOnce(async (_credential, body) =>
         resultFor(body, 2, { player: { x: 4 } }),
+      )
+      .mockImplementationOnce(async (_credential, body) =>
+        resultFor(body, 3, { player: { x: 3 } }),
       );
 
     const first = gateway.execute({ type: 'move', direction: 'right' });
-    const superseded = gateway.execute({ type: 'move', direction: 'down' });
+    const second = gateway.execute({ type: 'move', direction: 'down' });
     const latest = gateway.execute({ type: 'move', direction: 'left' });
-    await expect(superseded).rejects.toBeInstanceOf(CommandSupersededError);
     expect(transport.executeAction).toHaveBeenCalledTimes(1);
+    expect(gateway.getMetrics().queueDepth).toBe(2);
 
     const firstBody = actionBody(0);
     expect(firstBody).toMatchObject({
@@ -159,14 +162,59 @@ describe('GameGateway', () => {
       expect(transport.executeAction).toHaveBeenCalledTimes(2),
     );
 
-    const latestBody = actionBody(1);
-    expect(latestBody).toMatchObject({
+    const secondBody = actionBody(1);
+    expect(secondBody).toMatchObject({
       actionId: 'action-2',
       expectedRevision: 1,
+      command: { type: 'move', direction: 'down' },
+    });
+    await second;
+    await vi.waitFor(() =>
+      expect(transport.executeAction).toHaveBeenCalledTimes(3),
+    );
+
+    const latestBody = actionBody(2);
+    expect(latestBody).toMatchObject({
+      actionId: 'action-3',
+      expectedRevision: 2,
       command: { type: 'move', direction: 'left' },
     });
     await latest;
-    expect(gateway.getModel().getSnapshot()).toMatchObject({ revision: 2 });
+    expect(gateway.getModel().getSnapshot()).toMatchObject({ revision: 3 });
+    expect(gateway.getMetrics().queueDepth).toBe(0);
+  });
+
+  it('rejects the newest input visibly when the FIFO queue is full', async () => {
+    transport.loadGame.mockResolvedValueOnce({
+      revision: 0,
+      state: visibleState(),
+    });
+    const gateway = new GameGateway({
+      transport,
+      storage,
+      credential,
+      actionId: () => `action-${++actionNumber}`,
+      maxQueuedCommands: 2,
+    });
+    await gateway.loadGame();
+    const response = deferred<GameCommandResult>();
+    transport.executeAction.mockReturnValueOnce(response.promise);
+
+    void gateway.execute({ type: 'attack' });
+    void gateway.execute({ type: 'move', direction: 'right' });
+    void gateway.execute({ type: 'move', direction: 'down' });
+    await expect(
+      gateway.execute({ type: 'move', direction: 'left' }),
+    ).rejects.toBeInstanceOf(CommandQueueOverflowError);
+
+    expect(gateway.getMetrics()).toMatchObject({
+      queueDepth: 2,
+      rejectedInputCount: 1,
+    });
+    expect(gateway.getSnapshot().lifecycle).toMatchObject({
+      kind: 'command-failed',
+      message: 'The command queue is full. The newest input was not accepted.',
+    });
   });
 
   it('retains an exact ambiguous request and one queued intent through retry', async () => {
@@ -205,6 +253,11 @@ describe('GameGateway', () => {
       command: { type: 'attack' },
     });
     await queued;
+    expect(gateway.getMetrics()).toMatchObject({
+      queueDepth: 0,
+      retryCount: 1,
+      ambiguousOutcomeCount: 1,
+    });
   });
 
   it('applies conflict state, discards queued input, and never replays', async () => {

@@ -61,6 +61,7 @@ export interface GameGatewayDependencies {
   readonly actionId?: () => string;
   readonly now?: () => number;
   readonly credential?: GameSessionCredential;
+  readonly maxQueuedCommands?: number;
 }
 
 interface DeferredResult {
@@ -90,11 +91,18 @@ export class GatewayStateError extends Error {
   }
 }
 
-export class CommandSupersededError extends Error {
+export class CommandQueueOverflowError extends Error {
   constructor() {
-    super('A newer command replaced this queued input.');
-    this.name = 'CommandSupersededError';
+    super('The command queue is full. The newest input was not accepted.');
+    this.name = 'CommandQueueOverflowError';
   }
+}
+
+export interface GameGatewayMetrics {
+  readonly queueDepth: number;
+  readonly rejectedInputCount: number;
+  readonly retryCount: number;
+  readonly ambiguousOutcomeCount: number;
 }
 
 export class RetryNotReadyError extends Error {
@@ -132,10 +140,14 @@ export class GameGateway implements GameGatewayContract {
   private readonly storage: ActiveGameStorage;
   private readonly generateActionId: () => string;
   private readonly now: () => number;
+  private readonly maxQueuedCommands: number;
   private credential: GameSessionCredential | null;
   private model: GameClientModel | null = null;
   private pending: PendingAction | null = null;
-  private queued: QueuedIntent | null = null;
+  private readonly queued: QueuedIntent[] = [];
+  private rejectedInputCount = 0;
+  private retryCount = 0;
+  private ambiguousOutcomeCount = 0;
   private terminalRevision: number | null = null;
   private snapshot: GameGatewaySnapshot = {
     version: 0,
@@ -151,6 +163,13 @@ export class GameGateway implements GameGatewayContract {
     this.generateActionId =
       dependencies.actionId ?? (() => crypto.randomUUID());
     this.now = dependencies.now ?? Date.now;
+    this.maxQueuedCommands = dependencies.maxQueuedCommands ?? 8;
+    if (
+      !Number.isInteger(this.maxQueuedCommands) ||
+      this.maxQueuedCommands < 1
+    ) {
+      throw new RangeError('maxQueuedCommands must be a positive integer.');
+    }
     this.credential = dependencies.credential ?? null;
   }
 
@@ -160,6 +179,15 @@ export class GameGateway implements GameGatewayContract {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
+
+  getMetrics(): GameGatewayMetrics {
+    return {
+      queueDepth: this.queued.length,
+      rejectedInputCount: this.rejectedInputCount,
+      retryCount: this.retryCount,
+      ambiguousOutcomeCount: this.ambiguousOutcomeCount,
+    };
+  }
 
   subscribeResults(listener: ResultListener): () => void {
     this.resultListeners.add(listener);
@@ -258,8 +286,13 @@ export class GameGateway implements GameGatewayContract {
         );
       }
       const deferred = deferredResult();
-      this.queued?.reject(new CommandSupersededError());
-      this.queued = { command: parsedCommand, ...deferred };
+      if (this.queued.length >= this.maxQueuedCommands) {
+        this.rejectedInputCount += 1;
+        const error = new CommandQueueOverflowError();
+        this.setLifecycle({ kind: 'command-failed', message: error.message });
+        return Promise.reject(error);
+      }
+      this.queued.push({ command: parsedCommand, ...deferred });
       this.setLifecycle({ kind: 'action-in-flight', queued: true });
       return deferred.promise;
     }
@@ -280,6 +313,7 @@ export class GameGateway implements GameGatewayContract {
     if (lifecycle.retryAt !== null && this.now() < lifecycle.retryAt) {
       return Promise.reject(new RetryNotReadyError(lifecycle.retryAt));
     }
+    this.retryCount += 1;
     void this.sendPending(pending);
     return pending.promise;
   }
@@ -370,7 +404,7 @@ export class GameGateway implements GameGatewayContract {
     pending.inFlight = true;
     this.setLifecycle({
       kind: 'action-in-flight',
-      queued: this.queued !== null,
+      queued: this.queued.length > 0,
     });
     try {
       const response = await this.transport.executeAction(
@@ -416,8 +450,7 @@ export class GameGateway implements GameGatewayContract {
       return;
     }
 
-    const queued = this.queued;
-    this.queued = null;
+    const queued = this.queued.shift();
     if (queued) {
       this.beginAction(queued.command, queued);
     } else {
@@ -471,7 +504,8 @@ export class GameGateway implements GameGatewayContract {
       if (
         error.response.code === 'RATE_LIMITED' ||
         error.response.code === 'DATABASE_UNAVAILABLE' ||
-        error.response.code === 'DATABASE_ERROR'
+        error.response.code === 'DATABASE_ERROR' ||
+        error.response.code === 'SERVICE_UNAVAILABLE'
       ) {
         this.setLifecycle({
           kind: 'retry-required',
@@ -484,6 +518,7 @@ export class GameGateway implements GameGatewayContract {
     }
 
     if (error instanceof GameRequestTimeoutError) {
+      this.ambiguousOutcomeCount += 1;
       this.setLifecycle({
         kind: 'retry-required',
         message:
@@ -494,6 +529,7 @@ export class GameGateway implements GameGatewayContract {
     }
 
     if (error instanceof GameNetworkError) {
+      this.ambiguousOutcomeCount += 1;
       this.setLifecycle({
         kind: 'retry-required',
         message:
@@ -504,6 +540,7 @@ export class GameGateway implements GameGatewayContract {
     }
 
     if (error instanceof GameProtocolError) {
+      this.ambiguousOutcomeCount += 1;
       this.setLifecycle({
         kind: 'retry-required',
         message:
@@ -561,8 +598,7 @@ export class GameGateway implements GameGatewayContract {
 
     this.pending = null;
     pending.reject(error);
-    const queued = this.queued;
-    this.queued = null;
+    const queued = this.queued.shift();
     if (queued) {
       this.beginAction(queued.command, queued);
     } else {
@@ -732,9 +768,7 @@ export class GameGateway implements GameGatewayContract {
   }
 
   private rejectQueued(error: unknown): void {
-    const queued = this.queued;
-    this.queued = null;
-    queued?.reject(error);
+    for (const queued of this.queued.splice(0)) queued.reject(error);
   }
 
   private finishAbandon(): void {

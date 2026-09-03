@@ -17,9 +17,15 @@ import {
   isDatabaseHealthy,
 } from '@/services/database.js';
 import {
+  flushGameCheckpoints,
   startLeaderboardReconciliation,
   stopLeaderboardReconciliation,
 } from '@/services/gameCommandService.js';
+import {
+  closeRedis,
+  connectToRedis,
+  isRedisHealthy,
+} from '@/services/redis.js';
 import {
   RATE_LIMIT_MAX_REQUESTS,
   RATE_LIMIT_TIME_WINDOW,
@@ -45,7 +51,7 @@ const fastify = Fastify({
   logger:
     process.env.NODE_ENV === 'production'
       ? {
-          level: 'warn', // Only log warnings and errors in production
+          level: 'info',
         }
       : {
           level: 'info', // Log everything in development
@@ -75,7 +81,7 @@ await fastify.register(cors, {
         callback: (err: Error | null, origin: string | boolean) => void,
       ) => {
         // Always allow health check endpoint (needed for Docker healthcheck)
-        if (req.url === '/health') {
+        if (req.url.startsWith('/health')) {
           return callback(null, true);
         }
 
@@ -122,33 +128,41 @@ await fastify.register(gameRoutes);
 await fastify.register(leaderboardRoutes, { prefix: '/leaderboard' });
 
 // Health check
-fastify.get('/health', async (_request, reply) => {
-  try {
-    // Add timeout to health check to prevent hanging
-    // Use 4s timeout (shorter than DB's 5s socketTimeoutMS to avoid race)
-    const dbHealthyPromise = isDatabaseHealthy();
-    const timeoutPromise = new Promise<boolean>((resolve) =>
-      setTimeout(() => resolve(false), 4000),
-    );
-    const dbHealthy = await Promise.race([
-      dbHealthyPromise.catch(() => false), // Convert rejections to false
-      timeoutPromise,
-    ]);
+fastify.get('/health', async () => ({ status: 'ok' }));
 
-    if (!dbHealthy) {
-      return reply.status(503).send({ status: 'error', db: 'disconnected' });
+fastify.get('/health/dependencies', async (_request, reply) => {
+  try {
+    const dependencyChecks = Promise.all([
+      isDatabaseHealthy().catch(() => false),
+      isRedisHealthy().catch(() => false),
+    ]);
+    const timeout = new Promise<[boolean, boolean]>((resolve) =>
+      setTimeout(() => resolve([false, false]), 4_000),
+    );
+    const [mongodb, redis] = await Promise.race([dependencyChecks, timeout]);
+    if (!mongodb || !redis) {
+      return reply.status(503).send({
+        status: 'error',
+        mongodb: mongodb ? 'connected' : 'disconnected',
+        redis: redis ? 'connected' : 'disconnected',
+      });
     }
-    return { status: 'ok', db: 'connected' };
+    return { status: 'ok', mongodb: 'connected', redis: 'connected' };
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
     fastify.log.error({ err: error }, 'Health check failed');
-    return reply.status(503).send({ status: 'error', db: 'check_failed' });
+    return reply.status(503).send({
+      status: 'error',
+      mongodb: 'check_failed',
+      redis: 'check_failed',
+    });
   }
 });
 
 const start = async () => {
   try {
     await connectToDatabase();
+    await connectToRedis();
     await fastify.listen({ port: PORT, host: '0.0.0.0' });
     fastify.log.info(`Server listening on http://0.0.0.0:${PORT}`);
 
@@ -158,6 +172,7 @@ const start = async () => {
     const error = err instanceof Error ? err : new Error(String(err));
     fastify.log.error({ err: error }, 'Failed to start server');
     await closeDatabase();
+    await closeRedis();
     await fastify.close().catch(() => {}); // Ignore close errors
     process.exit(1);
   }
@@ -166,6 +181,8 @@ const start = async () => {
 // Graceful shutdown
 const shutdown = async () => {
   stopLeaderboardReconciliation();
+  await flushGameCheckpoints();
+  await closeRedis();
   await closeDatabase();
   await fastify.close();
   process.exit(0);

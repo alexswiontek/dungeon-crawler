@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const GAMEPLAY_PROTOCOL_VERSION = '1' as const;
+export const GAMEPLAY_PROTOCOL_VERSION = '2' as const;
 export const GAMEPLAY_PROTOCOL_HEADER = 'x-dungeon-crawler-protocol-version';
 export const GameplayProtocolVersionSchema = z.literal(
   GAMEPLAY_PROTOCOL_VERSION,
@@ -222,6 +222,7 @@ export const GameErrorCodeSchema = z.enum([
   'GAME_FINISHED',
   'DATABASE_UNAVAILABLE',
   'DATABASE_ERROR',
+  'SERVICE_UNAVAILABLE',
   'RATE_LIMITED',
   'INVALID_PLAYER_NAME',
   'PROTOCOL_MISMATCH',

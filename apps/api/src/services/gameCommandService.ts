@@ -22,6 +22,7 @@ import {
 } from '@dungeon-crawler/protocol';
 import type { Db, MongoServerError } from 'mongodb';
 import { getDb } from '@/services/database.js';
+import { createRedisGameCommandService } from '@/services/redisGameCommandService.js';
 import {
   createSessionToken,
   hashSessionToken,
@@ -75,6 +76,7 @@ const COMMAND_OUTCOME_BY_ERROR_CODE = {
   RATE_LIMITED: 'rate_limited',
   DATABASE_UNAVAILABLE: 'database_failure',
   DATABASE_ERROR: 'database_failure',
+  SERVICE_UNAVAILABLE: 'database_failure',
   INVALID_PLAYER_NAME: 'rejected',
   PROTOCOL_MISMATCH: 'rejected',
 } satisfies Record<GameErrorCode, GameCommandOutcome>;
@@ -731,7 +733,7 @@ export function createGameCommandService(
   };
 }
 
-const service = createGameCommandService();
+const service = createRedisGameCommandService();
 
 export const createGameSession = service.createGameSession;
 export const migrateLegacyGame = service.migrateLegacyGame;
@@ -740,6 +742,7 @@ export const executeGameCommand = service.executeGameCommand;
 export const deleteGame = service.deleteGame;
 export const reconcilePendingLeaderboards =
   service.reconcilePendingLeaderboards;
+export const flushGameCheckpoints = service.flushCheckpoints;
 
 let reconciliationInterval: NodeJS.Timeout | null = null;
 
