@@ -1,5 +1,5 @@
 import { Button } from '@/components/Button';
-import type { GameState } from '@/engine/GameState';
+import type { GameClientSnapshot } from '@/game/GameClientModel';
 import { cn } from '@/utils/cn';
 
 export function DeathScreen({
@@ -10,7 +10,7 @@ export function DeathScreen({
   onChangeName,
   onShowLeaderboard,
 }: {
-  gameState: GameState;
+  gameState: GameClientSnapshot;
   won: boolean;
   playerName: string;
   onPlayAgainWithName: () => void;

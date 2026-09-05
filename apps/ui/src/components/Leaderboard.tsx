@@ -6,10 +6,9 @@ import { cn } from '@/utils/cn';
 
 function getKilledByStyle(entry: LeaderboardEntry): string {
   if (!entry.killedBy) return 'text-success';
-  // Match the in-game variant tints
-  if (entry.killedByVariant === 'champion') return 'text-red-400 font-bold'; // Red/purple tint
-  if (entry.killedByVariant === 'elite') return 'text-blue-400 font-semibold'; // Blue tint
-  return 'text-gray-300'; // Normal enemy - neutral
+  if (entry.killedByVariant === 'champion') return 'text-red-400 font-bold';
+  if (entry.killedByVariant === 'elite') return 'text-blue-400 font-semibold';
+  return 'text-gray-300';
 }
 
 export function Leaderboard({ onBack }: { onBack: () => void }) {

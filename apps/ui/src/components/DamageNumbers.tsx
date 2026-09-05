@@ -2,12 +2,14 @@ import { useEffect } from 'react';
 import { TILE_SIZE } from '@/sprites';
 import { cn } from '@/utils/cn';
 
+const ANIMATION_DURATION_MS = 800;
+
 export interface DamageEvent {
   id: string;
   amount: number;
   tileX: number;
   tileY: number;
-  isPlayer: boolean; // true = player took damage (red), false = enemy took damage (white)
+  isPlayer: boolean;
 }
 
 interface DamageNumbersProps {
@@ -34,17 +36,15 @@ function DamageNumber({
   useEffect(() => {
     const timer = setTimeout(() => {
       onComplete(event.id);
-    }, 800); // Match animation duration
+    }, ANIMATION_DURATION_MS);
     return () => clearTimeout(timer);
   }, [event.id, onComplete]);
 
-  // Calculate position relative to viewport
   const screenX = (event.tileX - cameraX) * TILE_SIZE * tileScale;
   const screenY = (event.tileY - cameraY) * TILE_SIZE * tileScale;
 
-  // Center the number on the tile
   const centerX = screenX + (TILE_SIZE * tileScale) / 2;
-  const centerY = screenY + (TILE_SIZE * tileScale) / 4; // Slightly above center
+  const centerY = screenY + (TILE_SIZE * tileScale) / 4;
 
   return (
     <div

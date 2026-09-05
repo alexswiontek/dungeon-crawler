@@ -1,21 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActionLog } from '@/components/ActionLog';
+import { ActionRequestOverlay } from '@/components/ActionRequestOverlay';
 import { ConfirmModal } from '@/components/ConfirmModal';
-import { ConnectionOverlay } from '@/components/ConnectionOverlay';
 import { DamageNumbers } from '@/components/DamageNumbers';
 import { DPad } from '@/components/DPad';
 import { GameTooltip } from '@/components/GameTooltip';
 import { Header } from '@/components/Header';
 import { HUD } from '@/components/HUD';
-import { LoadingScreen } from '@/components/LoadingScreen';
 import { Projectiles } from '@/components/Projectile';
 import { ToastContainer } from '@/components/ToastContainer';
 import { AssetManager } from '@/engine/AssetManager';
 import { GameCanvas } from '@/engine/GameCanvas';
-import type { GameState } from '@/engine/GameState';
+import type { GameClientSnapshot } from '@/game/GameClientModel';
+import type { GameGateway, GameGatewayLifecycle } from '@/game/GameGateway';
 import { useDamageEvents } from '@/hooks/useDamageEvents';
 import { useEventNotifications } from '@/hooks/useEventNotifications';
-import { useGameSocket } from '@/hooks/useGameSocket';
+import { useGameSession } from '@/hooks/useGameSession';
 import { useKeyboardControls } from '@/hooks/useKeyboardControls';
 import { useProjectileEvents } from '@/hooks/useProjectileEvents';
 import { useScreenShake } from '@/hooks/useScreenShake';
@@ -24,123 +24,137 @@ import { useWindowSize } from '@/hooks/useWindowSize';
 import { getProjectileConfig, TILE_SIZE } from '@/sprites';
 import { cn } from '@/utils/cn';
 
+interface GameProps {
+  gateway: GameGateway;
+  onGameEnd: (state: GameClientSnapshot, won: boolean) => void;
+  onSessionInvalid: (message: string) => void;
+  onAbandoned: () => void;
+}
+
+function permitsInput(lifecycle: GameGatewayLifecycle): boolean {
+  return (
+    lifecycle.kind === 'playing' ||
+    lifecycle.kind === 'action-in-flight' ||
+    lifecycle.kind === 'conflict-resynchronized' ||
+    lifecycle.kind === 'command-failed'
+  );
+}
+
 export function Game({
-  gameId,
+  gateway,
   onGameEnd,
-  onRestart,
-}: {
-  gameId: string;
-  onGameEnd: (state: GameState, won: boolean) => void;
-  onRestart: () => void;
-}) {
+  onSessionInvalid,
+  onAbandoned,
+}: GameProps) {
   const {
-    gameState,
+    model,
+    game,
+    gatewaySnapshot,
     events,
-    connected,
-    reconnecting,
-    reconnectAttempt,
-    error,
+    damagedEntities,
     sendMove,
     sendAttack,
-    damagedEntities,
-    hasPlayer,
-    status,
-    hasPendingMessages,
-  } = useGameSocket(gameId);
+    retryAction,
+  } = useGameSession(gateway);
   const { isMobile, width, height } = useWindowSize();
-
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
   const [zoomedOut, setZoomedOut] = useState(true);
-
+  const [localNotice, setLocalNotice] = useState<string | null>(null);
   const gameContainerRef = useRef<HTMLDivElement>(null);
+  const terminalRevisionRef = useRef<number | null>(null);
+  const sessionInvalidHandledRef = useRef(false);
+  const abandonedHandledRef = useRef(false);
+  const lifecycle = gatewaySnapshot.lifecycle;
+  const inputAllowed = permitsInput(lifecycle) && game.status === 'active';
+
+  useEffect(() => {
+    const closeGateway = (event: PageTransitionEvent) => {
+      if (!event.persisted) gateway.dispose();
+    };
+    window.addEventListener('pagehide', closeGateway);
+    return () => window.removeEventListener('pagehide', closeGateway);
+  }, [gateway]);
+
   const { handleKeyDown, handleMove, handleAttack } = useKeyboardControls(
-    gameState,
+    game,
     sendMove,
     sendAttack,
   );
 
-  // Viewport calculations
   const { viewportTiles, tileScale, camera } = useViewport({
     width,
     height,
     isMobile,
     zoomedOut,
-    playerX: gameState.player?.x,
-    playerY: gameState.player?.y,
+    playerX: game.player.x,
+    playerY: game.player.y,
   });
-
-  // Event notifications (toasts and tooltips)
   const { toasts, tooltip, removeToast, clearTooltip } = useEventNotifications(
     events,
-    hasPlayer,
+    true,
   );
-
-  // Damage events
   const { damageEvents, removeDamageEvent } = useDamageEvents(
     events,
-    gameState.player?.x,
-    gameState.player?.y,
+    game.player.x,
+    game.player.y,
   );
-
-  // Projectile events
   const { projectiles, removeProjectile } = useProjectileEvents(
     events,
-    gameState.player?.x,
-    gameState.player?.y,
-    gameState.player?.facingDirection,
+    game.player.x,
+    game.player.y,
+    game.player.facingDirection,
   );
+  const isScreenShaking = useScreenShake(damagedEntities.includes('player'));
 
-  // Screen shake effect
-  const playerDamaged = damagedEntities.includes('player');
-  const isScreenShaking = useScreenShake(playerDamaged);
-  const isLoading = !connected || reconnecting || hasPendingMessages;
-
-  const toggleZoom = () => {
-    setZoomedOut((prev) => !prev);
-  };
-
-  const handleRestartClick = () => {
-    setShowRestartConfirm(true);
-  };
-
-  // Notify parent when game ends
   useEffect(() => {
-    if (gameState.player && (status === 'dead' || status === 'won')) {
-      onGameEnd(gameState, status === 'won');
-    }
-  }, [status, gameState, onGameEnd]);
+    if (lifecycle.kind !== 'dead' && lifecycle.kind !== 'won') return;
+    if (terminalRevisionRef.current === lifecycle.revision) return;
+    terminalRevisionRef.current = lifecycle.revision;
+    onGameEnd(game, lifecycle.kind === 'won');
+  }, [game, lifecycle, onGameEnd]);
 
-  // Auto-focus game container for keyboard controls
   useEffect(() => {
-    if (hasPlayer && !isLoading) {
-      gameContainerRef.current?.focus();
+    if (
+      lifecycle.kind !== 'session-invalid' ||
+      sessionInvalidHandledRef.current
+    ) {
+      return;
     }
-  }, [hasPlayer, isLoading]);
+    sessionInvalidHandledRef.current = true;
+    onSessionInvalid(lifecycle.message);
+  }, [lifecycle, onSessionInvalid]);
 
-  // Loading state - waiting for game state
-  if (!hasPlayer) {
-    return <LoadingScreen connected={connected} error={error} />;
-  }
+  useEffect(() => {
+    if (lifecycle.kind !== 'abandoned' || abandonedHandledRef.current) return;
+    abandonedHandledRef.current = true;
+    onAbandoned();
+  }, [lifecycle, onAbandoned]);
+
+  useEffect(() => {
+    if (inputAllowed) gameContainerRef.current?.focus();
+  }, [inputAllowed]);
+
+  const retryAbandon = (): void => {
+    void gateway.retryAbandon().catch(() => {});
+  };
 
   return (
     <div
       ref={gameContainerRef}
       role="application"
       aria-label="Dungeon Crawler game"
-      onKeyDown={handleKeyDown}
+      onKeyDown={inputAllowed ? handleKeyDown : undefined}
       tabIndex={-1}
       className="fixed inset-0 w-screen h-screen md:py-2.5 flex flex-col bg-primary select-none touch-none focus:outline-none"
     >
-      {/* Header with title and controls */}
       <div className="shrink-0 z-50 relative">
         <Header
           zoomedOut={zoomedOut}
-          onToggleZoom={toggleZoom}
-          onRestart={handleRestartClick}
+          onToggleZoom={() => setZoomedOut((current) => !current)}
+          onRestart={() => setShowRestartConfirm(true)}
         />
       </div>
 
-      {/* Desktop controls hint */}
       <div className="hidden md:flex justify-center py-1 text-xs text-gray-500 shrink-0">
         <span>
           <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-400">
@@ -158,7 +172,30 @@ export function Game({
         </span>
       </div>
 
-      {/* Game viewport */}
+      {(lifecycle.kind === 'conflict-resynchronized' ||
+        lifecycle.kind === 'command-failed') && (
+        <output className="text-center text-sm text-gold py-1">
+          {lifecycle.message}
+        </output>
+      )}
+      {localNotice && (
+        <output className="text-center text-sm text-gold py-1">
+          {localNotice}
+        </output>
+      )}
+      {(gatewaySnapshot.transportState === 'connecting' ||
+        gatewaySnapshot.transportState === 'authenticating' ||
+        gatewaySnapshot.transportState === 'reconnecting') && (
+        <output className="text-center text-xs text-gray-400 py-1">
+          Reconnecting game stream...
+        </output>
+      )}
+      {gatewaySnapshot.transportState === 'degraded-http-fallback' && (
+        <output className="text-center text-xs text-gold py-1">
+          Using slower HTTP fallback
+        </output>
+      )}
+
       <div
         className={cn(
           'flex-1 md:h-[70vh] md:flex-initial overflow-hidden relative',
@@ -167,14 +204,13 @@ export function Game({
       >
         <div className="w-full h-full flex items-center justify-center">
           <GameCanvas
-            gameState={gameState}
+            gameModel={model}
             assets={AssetManager}
             viewportTiles={viewportTiles}
             tileScale={tileScale}
             damagedEntities={damagedEntities}
           />
 
-          {/* Projectile animations */}
           <div
             className="absolute overflow-hidden pointer-events-none left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50"
             style={{
@@ -191,7 +227,6 @@ export function Game({
             />
           </div>
 
-          {/* Floating damage numbers */}
           <div
             className="absolute overflow-hidden pointer-events-none left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
             style={{
@@ -208,19 +243,56 @@ export function Game({
             />
           </div>
 
-          {/* Loading/Reconnecting overlay */}
-          {isLoading && (
-            <ConnectionOverlay
-              reconnecting={reconnecting}
-              reconnectAttempt={reconnectAttempt}
-              error={error}
+          {lifecycle.kind === 'retry-required' && (
+            <ActionRequestOverlay
+              error={lifecycle.message}
+              retryAt={lifecycle.retryAt}
+              onRetry={retryAction}
             />
           )}
 
-          {/* Toasts */}
-          <ToastContainer toasts={toasts} onRemove={removeToast} />
+          {lifecycle.kind === 'protocol-mismatch' && (
+            <div
+              role="alert"
+              className="absolute inset-0 bg-dark/90 flex flex-col items-center justify-center z-40 text-center"
+            >
+              <p className="text-accent">Reload required</p>
+              <p className="text-gray-400 mt-2">{lifecycle.message}</p>
+              <button
+                type="button"
+                className="mt-4"
+                onClick={() => window.location.reload()}
+              >
+                Reload Game
+              </button>
+            </div>
+          )}
 
-          {/* Tooltip overlay - tethered to game canvas */}
+          {(lifecycle.kind === 'abandoning' ||
+            lifecycle.kind === 'abandon-failed') && (
+            <div
+              role={lifecycle.kind === 'abandon-failed' ? 'alert' : 'status'}
+              className="absolute inset-0 bg-dark/90 flex flex-col items-center justify-center z-40 text-center"
+            >
+              <p className="text-gold">
+                {lifecycle.kind === 'abandoning'
+                  ? 'Abandoning game...'
+                  : 'Abandonment failed'}
+              </p>
+              {lifecycle.kind === 'abandon-failed' && (
+                <>
+                  <p className="text-accent text-sm mt-2">
+                    {lifecycle.message}
+                  </p>
+                  <button type="button" className="mt-4" onClick={retryAbandon}>
+                    Retry Abandon
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          <ToastContainer toasts={toasts} onRemove={removeToast} />
           {tooltip && (
             <GameTooltip
               key={tooltip.id}
@@ -234,38 +306,42 @@ export function Game({
         </div>
       </div>
 
-      {/* D-pad controls - mobile only (overlays on viewport) */}
       <DPad
         onMove={handleMove}
         onAttack={handleAttack}
-        disabled={isLoading || status !== 'active'}
-        projectileConfig={getProjectileConfig(
-          gameState.player?.character ?? 'dwarf',
-        )}
+        disabled={!inputAllowed}
+        projectileConfig={getProjectileConfig(game.player.character)}
       />
 
-      {/* Compact HUD with action log - mobile only (overlays below header) */}
       <div className="md:hidden fixed top-12 left-0 right-0 z-40 pointer-events-none">
         <div className="pointer-events-auto">
-          <HUD gameState={gameState} events={events} compact />
+          <HUD gameState={game} events={events} compact />
         </div>
         <div className="pointer-events-auto bg-dark/70 backdrop-blur-sm">
           <ActionLog events={events} maxEvents={3} />
         </div>
       </div>
 
-      {/* Desktop HUD */}
       <div className="hidden md:block px-4 pb-4 w-full max-w-4xl mx-auto shrink-0">
-        <HUD gameState={gameState} events={events} />
+        <HUD gameState={game} events={events} />
       </div>
 
-      {/* Restart confirmation modal */}
       {showRestartConfirm && (
         <ConfirmModal
           message="Are you sure you want to restart? All progress will be lost."
           onConfirm={() => {
             setShowRestartConfirm(false);
-            onRestart();
+            setLocalNotice(null);
+            void gateway.abandonGame().catch((error: unknown) => {
+              if (gateway.getSnapshot().lifecycle.kind === 'abandon-failed') {
+                return;
+              }
+              setLocalNotice(
+                error instanceof Error
+                  ? error.message
+                  : 'The game could not be abandoned yet.',
+              );
+            });
           }}
           onCancel={() => setShowRestartConfirm(false)}
         />

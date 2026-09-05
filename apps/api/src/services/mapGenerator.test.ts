@@ -5,12 +5,12 @@ import {
   type Tile,
 } from '@dungeon-crawler/shared';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { generateMap, initializeFog } from '@/test/helpers/gameplayAdapters.js';
 import {
   countTileType,
   findPath,
   validateMapStructure,
 } from '@/test/helpers/mapHelpers.js';
-import { generateMap, initializeFog } from './mapGenerator.js';
 
 describe('generateMap', () => {
   describe('Map Structure', () => {
@@ -159,7 +159,7 @@ describe('generateMap', () => {
 
       for (const enemy of enemies) {
         const tile = map[enemy.y][enemy.x];
-        expect(tile.type === 'floor' || tile.type === 'stairs').toBe(true);
+        expect(tile.type).toBe('floor');
       }
     });
 
@@ -226,7 +226,7 @@ describe('generateMap', () => {
 
       for (const item of items) {
         const tile = map[item.y][item.x];
-        expect(tile.type === 'floor' || tile.type === 'stairs').toBe(true);
+        expect(tile.type).toBe('floor');
       }
     });
 

@@ -1,6 +1,6 @@
 import { Toast } from '@/components/Toast';
 
-const TOAST_DURATION = 3000;
+const TOAST_DURATION = 2000;
 
 interface ToastData {
   id: number;

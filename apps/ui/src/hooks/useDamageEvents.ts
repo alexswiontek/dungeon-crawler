@@ -15,7 +15,6 @@ export function useDamageEvents(
   const damageIdRef = useRef(0);
   const processedDamageEventsRef = useRef<Set<string>>(new Set());
 
-  // Reset state when player position is lost (game restart/disconnect)
   useEffect(() => {
     if (playerX === undefined || playerY === undefined) {
       setDamageEvents([]);
@@ -29,7 +28,6 @@ export function useDamageEvents(
     events.forEach((event) => {
       if (processedDamageEventsRef.current.has(event.id)) return;
 
-      // Only show damage numbers for ranged attacks that actually hit (damage > 0)
       if (isRangedAttackEvent(event) && event.data.damage > 0) {
         processedDamageEventsRef.current.add(event.id);
         setDamageEvents((prev) => [

@@ -27,13 +27,11 @@ export function useViewport({
   playerX,
   playerY,
 }: ViewportParams) {
-  // Calculate container dimensions
   const containerHeight = isMobile
     ? height - MOBILE_HEADER_HEIGHT
     : height * DESKTOP_VIEWPORT_RATIO;
   const containerWidth = width;
 
-  // Calculate tile scaling
   const targetTilesY = zoomedOut
     ? Math.min(ZOOMED_OUT_TILES, MAP_HEIGHT)
     : ZOOMED_IN_TILES;
@@ -45,7 +43,6 @@ export function useViewport({
     y: Math.min(targetTilesY, MAP_HEIGHT),
   };
 
-  // Calculate camera position (centered on player, clamped to map bounds)
   const camera: Coordinate =
     playerX === undefined || playerY === undefined
       ? { x: 0, y: 0 }

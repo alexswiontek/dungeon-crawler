@@ -1,17 +1,17 @@
-import { CHARACTER_STATS, type GameEvent } from '@dungeon-crawler/shared';
-import type { GameState } from '@/engine/GameState';
+import {
+  calculateRangedAttackPower,
+  type GameEvent,
+} from '@dungeon-crawler/domain';
+import type { GameClientSnapshot } from '@/game/GameClientModel';
 
 interface HUDProps {
-  gameState: GameState;
+  gameState: GameClientSnapshot;
   events: GameEvent[];
   compact?: boolean;
 }
 
 export function HUD({ gameState, events, compact = false }: HUDProps) {
   const { player, floor, score } = gameState;
-
-  // Safety check - should not happen in practice
-  if (!player) return null;
 
   const hpPercent = (player.hp / player.maxHp) * 100;
   const hpColor =
@@ -23,12 +23,7 @@ export function HUD({ gameState, events, compact = false }: HUDProps) {
 
   const xpPercent = (player.xp / player.xpToNextLevel) * 100;
 
-  // Calculate ranged damage: base + equipment bonus + level bonus
-  const baseCharStats = CHARACTER_STATS[player.character];
-  const rangedEquipmentBonus = player.equipment.ranged?.rangedDamageBonus || 0;
-  const levelBonus = (player.level - 1) * 1; // Same scaling as attack/defense
-  const totalRangedDamage =
-    baseCharStats.rangedDamage + rangedEquipmentBonus + levelBonus;
+  const totalRangedDamage = calculateRangedAttackPower(player);
 
   // Compact single-line HUD for mobile
   if (compact) {

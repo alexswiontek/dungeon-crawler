@@ -7,7 +7,7 @@ export type { ProjectileType };
 export interface ProjectileEvent {
   id: string;
   type: ProjectileType;
-  startX: number; // Tile coordinates
+  startX: number;
   startY: number;
   endX: number;
   endY: number;
@@ -22,7 +22,7 @@ interface ProjectileProps {
   onComplete: (id: string) => void;
 }
 
-const ANIMATION_DURATION = 200; // ms
+const ANIMATION_DURATION_MS = 200;
 
 function Projectile({
   event,
@@ -38,7 +38,7 @@ function Projectile({
 
     const animate = () => {
       const elapsed = Date.now() - startTime;
-      const newProgress = Math.min(elapsed / ANIMATION_DURATION, 1);
+      const newProgress = Math.min(elapsed / ANIMATION_DURATION_MS, 1);
       setProgress(newProgress);
 
       if (newProgress < 1) {
@@ -51,20 +51,16 @@ function Projectile({
     requestAnimationFrame(animate);
   }, [event.id, onComplete]);
 
-  // Calculate current position (lerp between start and end)
   const currentX = event.startX + (event.endX - event.startX) * progress;
   const currentY = event.startY + (event.endY - event.startY) * progress;
 
-  // Convert to screen coordinates
   const screenX = (currentX - cameraX) * TILE_SIZE * tileScale;
   const screenY = (currentY - cameraY) * TILE_SIZE * tileScale;
 
   const scaledSize = TILE_SIZE * tileScale;
 
-  // Get projectile configuration
   const config = getProjectileConfigByType(event.type);
 
-  // Spell uses CSS effect - glowing orb
   if (!config.sprite) {
     return (
       <div
@@ -85,7 +81,6 @@ function Projectile({
     );
   }
 
-  // Get rendering properties from config
   const sprite = config.sprite;
   const rotation = config.getRotation(event.direction);
   const flipX = config.shouldFlip(event.direction);

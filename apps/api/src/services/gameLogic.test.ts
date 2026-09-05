@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  descendStairs,
+  processAttack,
+  processMove,
+} from '@/test/helpers/gameplayAdapters.js';
+import {
   createTestEnemy,
   createTestGameState,
   createTestPlayer,
 } from '@/test/helpers/gameStateHelpers.js';
-import { descendStairs, processAttack, processMove } from './gameLogic.js';
 
 describe('Game Logic', () => {
   describe('Character Attack Configuration', () => {

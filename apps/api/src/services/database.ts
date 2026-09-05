@@ -4,15 +4,15 @@ import { logger } from '@/utils/logger.js';
 
 const MONGODB_URI = process.env.MONGODB_URI;
 
-// Connection pool configuration
 const mongoOptions: MongoClientOptions = {
   maxPoolSize: 10,
   minPoolSize: 2,
+  ignoreUndefined: true,
   retryWrites: true,
   retryReads: true,
-  connectTimeoutMS: 5000, // Reduced from 10s to 5s for faster failure
-  serverSelectionTimeoutMS: 5000, // Reduced from 10s to 5s
-  socketTimeoutMS: 5000, // Add socket timeout to prevent hanging operations
+  connectTimeoutMS: 5000,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 5000,
 };
 
 let client: MongoClient | null = null;
@@ -31,23 +31,28 @@ export async function connectToDatabase(): Promise<Db> {
     db = newClient.db();
     client = newClient;
 
-    // Create TTL index to auto-delete inactive games after 7 days
     await db
       .collection('games')
       .createIndex(
         { updatedAt: 1 },
         { expireAfterSeconds: GAME_TTL_SECONDS, background: true },
       );
+    // Receipt IDs are unique only within the command service's bounded retry window.
+    await db
+      .collection('games')
+      .createIndex(
+        { 'actionReceipts.actionId': 1 },
+        { unique: true, sparse: true, background: true },
+      );
 
-    // Create indexes for leaderboard queries
     logger.info('Creating database indexes...');
     await db
       .collection('leaderboard')
-      .createIndex({ score: -1 }, { background: true }); // For top scores query
+      .createIndex({ score: -1 }, { background: true });
 
     await db
       .collection('leaderboard')
-      .createIndex({ createdAt: -1 }, { background: true }); // For recent scores query
+      .createIndex({ createdAt: -1 }, { background: true });
 
     logger.info(
       { database: db.databaseName },
@@ -55,7 +60,7 @@ export async function connectToDatabase(): Promise<Db> {
     );
     return db;
   } catch (error) {
-    await newClient.close(); // Clean up failed connection
+    await newClient.close();
     throw error;
   }
 }

@@ -1,23 +1,33 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AssetManager } from '@/engine/AssetManager';
 
 interface LoadingScreenProps {
-  connected: boolean;
   error: string | null;
 }
 
-export function LoadingScreen({ connected, error }: LoadingScreenProps) {
+export function LoadingScreen({ error }: LoadingScreenProps) {
   const [assetsLoaded, setAssetsLoaded] = useState(false);
   const [assetLoadError, setAssetLoadError] = useState(false);
+  const mountedRef = useRef(false);
+
+  const loadAssets = useCallback(async (): Promise<void> => {
+    setAssetsLoaded(false);
+    setAssetLoadError(false);
+    try {
+      await AssetManager.loadAll();
+      if (mountedRef.current) setAssetsLoaded(true);
+    } catch {
+      if (mountedRef.current) setAssetLoadError(true);
+    }
+  }, []);
 
   useEffect(() => {
-    AssetManager.loadAll()
-      .then(() => setAssetsLoaded(true))
-      .catch((err) => {
-        console.error('[AssetManager] Failed to load assets:', err);
-        setAssetLoadError(true);
-      });
-  }, []);
+    mountedRef.current = true;
+    void loadAssets();
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [loadAssets]);
 
   return (
     <div className="h-dvh py-2.5 flex items-center justify-center">
@@ -25,18 +35,12 @@ export function LoadingScreen({ connected, error }: LoadingScreenProps) {
         {assetLoadError ? (
           <>
             <p className="text-accent mb-4">Failed to load game assets</p>
-            <button type="button" onClick={() => window.location.reload()}>
-              Reload Page
+            <button type="button" onClick={() => void loadAssets()}>
+              Retry Assets
             </button>
           </>
         ) : (
-          <p>
-            {!assetsLoaded
-              ? 'Loading sprites...'
-              : connected
-                ? 'Loading game...'
-                : 'Connecting...'}
-          </p>
+          <p>{!assetsLoaded ? 'Loading sprites...' : 'Loading game...'}</p>
         )}
         {error && <p className="text-accent mt-2">{error}</p>}
       </div>

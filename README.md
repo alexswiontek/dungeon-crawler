@@ -1,226 +1,226 @@
 # Dungeon Crawler
 
-A browser-based dungeon crawler game built with TypeScript, React, Fastify, and MongoDB. Fight monsters, collect loot, and try to escape 20 floors of procedurally generated dungeons!
+Demo project to demonstrate how a React client, a Fastify API, WebSockets, Redis, MongoDB, automated tests, containers, and cloud deployment can work together in a full game project. 
 
-## Overview
+To play the deployed version, use the website link in this repository's GitHub About section. The game itself is a browser-based dungeon crawler: choose a character, fight monsters, collect equipment, and try to escape 20 procedurally generated floors.
 
-A full-stack TypeScript game featuring:
+## What the demo covers
 
-- **Real-time WebSocket gameplay** with delta updates (not full state polling)
-- **Turn-based dungeon crawler mechanics** with permadeath
-- **Procedurally generated dungeons** using Binary Space Partitioning
-- **Server-authoritative game logic** with anti-cheat (only visible data sent to client)
-- **ASCII-style rendering** with fog of war
-- **Persistent leaderboards** in MongoDB
-- **Monorepo architecture** with shared types
+- Server-authoritative game rules with no client prediction
+- Authenticated WebSocket gameplay with an HTTP fallback
+- Redis command journaling and MongoDB checkpoints
+- Recovery through deterministic command replay
+- Filtered client state that hides unexplored terrain and enemies
+- A React interface with a Canvas 2D game renderer
+- Unit, integration, network, and browser-facing test coverage
+- Docker, Fly.io, and static UI deployment configuration
 
-## Quick Start
+The current deployment assumes one API machine. Redis checks revisions and action identity atomically, but the API does not implement distributed locks or ownership across multiple machines.
 
-### Prerequisites
+## How to play
 
-- Node.js 24+
-- pnpm
-- Docker & Docker Compose (optional, for MongoDB)
+1. Enter a player name and choose Dwarf, Elf, Bandit, or Wizard.
+2. Move with WASD, the arrow keys, or the on-screen controls.
+3. Walk into an enemy for melee combat, or press Space for a ranged attack.
+4. Pick up potions and stronger equipment.
+5. Walk onto the stairs to descend.
+6. Escape floor 20 to win.
 
-### Installation
+## Architecture
 
-```bash
-# Install dependencies
-pnpm install
+Gameplay commands travel over an authenticated WebSocket connection. The API keeps active games in memory and records each accepted command in Redis before acknowledging it. A background worker periodically writes complete checkpoints to MongoDB and removes confirmed journal entries from Redis.
+
+If the API restarts or loses an in-memory game, it loads the latest MongoDB checkpoint and replays newer Redis entries. Revision, protocol, reducer, random-state, and state-hash checks prevent partial or incompatible state from loading.
+
+The browser receives a filtered view of the game: explored terrain, remembered items on explored tiles, and currently visible enemies. Session creation, recovery, migration, deletion, health checks, leaderboards, and the degraded gameplay fallback use HTTP.
+
+`GameGateway` is the browser's gameplay boundary. It can pipeline up to eight accepted inputs. The server processes up to 16 unfinished commands per socket in order. After four consecutive socket failures, the gateway switches to sequential HTTP while preserving command order and identity.
+
+```text
+dungeon-crawler/
+├── apps/
+│   ├── api/          Fastify API, persistence, health checks, and leaderboards
+│   ├── redis/        Redis image with AOF persistence for Fly.io
+│   └── ui/           React application and Canvas 2D renderer
+├── packages/
+│   ├── domain/       Game rules, generation, combat, progression, and visibility
+│   ├── protocol/     Runtime schemas, wire types, and client projections
+│   └── shared/       Compatibility exports for domain and protocol consumers
+├── docker-compose.yml
+├── pnpm-workspace.yaml
+└── vitest.workspace.ts
 ```
 
-### Configuration
+## Requirements
 
-Each app has its own `.env.example`:
+- Node.js 24.19.0
+- pnpm 11.24.0
+- MongoDB
+- Redis
+
+The repository pins Node in `.node-version` and pnpm in `package.json`.
 
 ```bash
-# API environment
-cp apps/api/.env.example apps/api/.env
-
-# UI environment (only needed for production builds)
-cp apps/ui/.env.example apps/ui/.env
+fnm use
+corepack enable
+corepack prepare pnpm@11.24.0 --activate
+pnpm install --frozen-lockfile
 ```
 
-| App | Variable          | Description                                                                |
-| --- | ----------------- | -------------------------------------------------------------------------- |
-| API | `PORT`            | Server port (default: `3000`)                                              |
-| API | `MONGODB_URI`     | MongoDB connection string                                                  |
-| API | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins (optional)                    |
-| API | `NODE_ENV`        | Environment (`development`, `production`, `test`) (default: `development`) |
-| UI  | `VITE_API_URL`    | API URL for production (empty for local dev)                               |
+## Local development
 
-### Development
+Start MongoDB and Redis, then run the API and UI:
 
 ```bash
-# Start MongoDB (if not using Docker)
-# OR run: docker compose up mongo -d
-
-# Run both API and UI
+docker compose up -d mongo redis
 pnpm dev
+```
 
-# Run API only (port 3000)
+The UI runs at `http://localhost:5173` and proxies API requests and WebSocket upgrades to `http://127.0.0.1:3000`.
+
+To run either application with its required workspace watchers:
+
+```bash
 pnpm dev:api
-
-# Run UI only (port 5173)
 pnpm dev:ui
 ```
 
-The UI will be available at `http://localhost:5173` and connects via WebSocket to the API.
+If Redis already runs through Homebrew, start only MongoDB and set `REDIS_URL=redis://127.0.0.1:6379` in `apps/api/.env` before starting the applications.
 
-### Docker
+## Configuration
+
+Environment files are local inputs and must not be committed. Keep MongoDB credentials, Redis credentials, and session tokens out of source, documentation, build arguments, URLs, action bodies, and logs.
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `MONGODB_URI` | Yes | None | MongoDB connection used by the API. Startup fails if the database is unavailable. |
+| `REDIS_URL` | Yes | None | Redis connection used by the API. Startup fails if Redis is unavailable. |
+| `PORT` | No | `3000` | API port. |
+| `ALLOWED_ORIGINS` | No | `http://localhost:5173` | Comma-separated browser origins allowed by the API. |
+| `NODE_ENV` | No | Development behavior | Enables production logging and CORS behavior or test log suppression. |
+| `CHECKPOINT_COMMAND_INTERVAL` | No | `20` | Commands allowed between scheduled MongoDB checkpoints. |
+| `CHECKPOINT_TIME_INTERVAL_MS` | No | `30000` | Maximum time a dirty active game waits for a checkpoint. |
+| `VITE_API_URL` | No | `/api` | API base URL embedded in the UI build. The client derives its WebSocket URL from it. |
+
+The API reads `apps/api/.env` when present. The example environment files contain placeholders only.
+
+### Test and benchmark configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MONGODB_TEST_URI` | `mongodb://127.0.0.1:27017/?directConnection=true` | Disposable local MongoDB used by integration tests. |
+| `REDIS_TEST_URL` | `redis://127.0.0.1:6379` | Local Redis used by integration tests with isolated key prefixes. |
+| `BENCHMARK_API_URL` | `http://127.0.0.1:3000` | API tested by the command benchmarks. |
+| `BENCHMARK_ORIGIN` | None | Allowed UI origin sent with benchmark requests when required. |
+| `BENCHMARK_MOVEMENTS` | `20` | Valid movements measured by each benchmark. |
+| `BENCHMARK_INPUT_INTERVAL_MS` | `80` | Delay between WebSocket inputs. Use `0` for a capacity burst. |
+
+The test scripts set their own integration flags. Test services must be disposable and must never point to production or shared databases.
+
+## Verification
+
+Run the standard checks:
 
 ```bash
-# Start all services (API, MongoDB, UI)
-docker compose up
-
-# Stop all services
-docker compose down
+pnpm run verify
 ```
 
-## Common Commands
+This checks formatting, types, lint rules, and the standard test projects without changing source files. Run `pnpm format` to apply formatting.
+
+The extended checks require local MongoDB and Redis services:
 
 ```bash
-# Development
-pnpm dev              # Run both API and UI in parallel
-pnpm dev:api          # Run API server on port 3000
-pnpm dev:ui           # Run UI on port 5173
-
-# Build
-pnpm build            # Build all packages
-
-# Type checking
-pnpm typecheck        # Check TypeScript types across all packages
-
-# Code quality
-pnpm lint             # Run Biome linter
-pnpm format           # Auto-fix linting and formatting issues
-
-# Docker
-docker compose up     # Start all services
-docker compose down   # Stop all services
+pnpm test:coverage
+pnpm test:integration
+pnpm build
+pnpm build:ui
+git diff --check
 ```
 
-## Project Structure
+With the API running, the command benchmarks compare sequential HTTP movement with pipelined WebSocket movement:
 
-```
-dungeon-crawler/
-├── apps/
-│   ├── api/          # Fastify backend (game logic + MongoDB)
-│   │   └── src/
-│   │       ├── index.ts              # Server entry point
-│   │       ├── routes/               # HTTP + WebSocket endpoints
-│   │       └── services/             # Game logic, map generation, DB
-│   └── ui/           # React frontend (UI + rendering)
-│       └── src/
-│           ├── App.tsx               # Main app controller
-│           ├── components/           # UI components
-│           └── hooks/                # WebSocket client, API client
-├── packages/
-│   └── shared/       # Shared TypeScript types + constants
-└── docs/             # Documentation
+```bash
+pnpm --filter @dungeon-crawler/api benchmark:commands
+pnpm --filter @dungeon-crawler/api benchmark:websocket
 ```
 
-## How to Play
+## Production builds
 
-1. Enter your name on the start screen
-2. Use **WASD** or **Arrow Keys** to move
-3. Walk into enemies to attack them or use **Spacebar** for a ranged attack
-4. Collect health potions (!) to heal
-5. Walk onto stairs to descend to the next floor
-6. Reach floor 20 to win!
+The root build compiles the workspace packages, API, and UI in dependency order. The UI build compiles only the packages needed by the browser application.
 
-## Tech Stack
+```bash
+pnpm build
+pnpm build:ui
+```
 
-### Backend
+Generated `dist`, coverage, and TypeScript build files are ignored.
 
-- **Fastify** - Fast, low-overhead web framework
-- **@fastify/websocket** - WebSocket support for real-time updates
-- **MongoDB** - Document database for game state and leaderboards
-- **TypeScript** - Type-safe development
+## Containers
 
-### Frontend
+Build the API and UI images:
 
-- **React 18** - UI framework
-- **Vite 5** - Fast build tool and dev server
-- **Tailwind CSS v4** - Utility-first CSS
-- **TypeScript** - Type-safe development
+```bash
+docker build --no-cache -f apps/api/Dockerfile -t dungeon-crawler-api:local .
+docker build --no-cache -f apps/ui/Dockerfile -t dungeon-crawler-ui:local .
+```
 
-### Infrastructure
+Run an isolated Compose smoke test with a unique project name and host ports:
 
-- **pnpm** - Fast, efficient package manager
-- **Docker Compose** - Container orchestration
-- **Biome** - Fast linter and formatter
+```bash
+MONGO_HOST_PORT=27018 REDIS_HOST_PORT=6380 docker compose -p dc-smoke up -d --build --wait
+curl --fail http://localhost:5173/
+curl --fail http://localhost:5173/api/health
+curl --fail http://localhost:5173/api/health/dependencies
+curl --fail http://localhost:5173/nonexistent-spa-route
+docker compose -p dc-smoke down --volumes
+```
 
-## Architecture Highlights
+The Compose stack runs MongoDB and Redis as separate services. The API port stays inside the Compose network, so nginx is the browser-facing proxy for HTTP and WebSocket traffic.
 
-### WebSocket + Delta Updates
+## Persistence limits
 
-Instead of sending the full game state (~50KB) on every move, the server sends only **deltas** (~200 bytes):
+MongoDB is the long-term checkpoint store. Redis holds newer accepted commands so the API can rebuild current state after a restart.
 
-- Player position changes
-- Enemy movements (only visible enemies)
-- Fog of war reveals
-- Combat events
+The Fly.io Redis configuration uses one machine, one volume, and AOF persistence with `appendfsync everysec`. A sudden Redis host failure can lose about one second of acknowledged commands. Losing the Redis volume restores each game only to its latest confirmed MongoDB checkpoint.
 
-### Anti-Cheat
+## Legacy save migration
 
-The server never sends data outside the player's fog of war:
+The client can migrate the browser save format from the earlier WebSocket release. It keeps the game ID and player preferences, requests a one-time server migration, stores the new session credentials, and then removes the legacy record.
 
-- Hidden enemies are not transmitted
-- Map tiles only sent when revealed
-- All game logic runs server-side
+The migration applies only to active legacy documents without the authenticated persistence envelope or token hash. It cannot be repeated after conversion.
 
 ## Deployment
 
-### Environment Variables
+The checked-in Fly.io configuration expects a Redis app named `dungeon-crawler-redis` with one 1 GB volume in `lax`. Change `app` in `fly.redis.toml` if that name is unavailable.
 
-**Local development**: Copy each app's `.env.example` to `.env` (see [Configuration](#configuration)).
-**Production**: Set environment variables in your hosting platform (never commit `.env` files):
-
-- **Fly.io** (API): Set `MONGODB_URI` to your Atlas connection string and `ALLOWED_ORIGINS` to your frontend URL
-- **Vercel** (UI): Set `VITE_API_URL` to your Fly.io API URL
-
-### Deployment
-
-This monorepo deploys as three separate services:
-
-| Component | Service       |
-| --------- | ------------- |
-| UI        | Vercel        |
-| API       | Fly.io        |
-| DB        | MongoDB Atlas |
-
-### Vercel
-
-Set up the following config:
-
-| Config           | Value                             |
-| ---------------- | --------------------------------- |
-| Framework        | Vite                              |
-| Build Command    | `pnpm build:ui`                   |
-| Output Directory | `apps/ui/dist`                    |
-| Install Command  | `corepack enable && pnpm install` |
-
-#### Manual Fly.io Setup
-
-If you haven't set up Fly.io yet:
+Provision Redis and attach its private URL to the API. Keep the generated password and connection URL out of chat, source files, and command output.
 
 ```bash
-# Install flyctl
-brew install flyctl
-
-# Create the app
-fly launch
-
-# Deploy it / update
-fly deploy
+export REDIS_APP=dungeon-crawler-redis
+export REDIS_PASSWORD="$(openssl rand -hex 32)"
+fly apps create "$REDIS_APP"
+fly volumes create redis_data --app "$REDIS_APP" --region lax --size 1 --yes
+fly secrets set REDIS_PASSWORD="$REDIS_PASSWORD" --app "$REDIS_APP"
+fly deploy --config fly.redis.toml --app "$REDIS_APP"
+fly secrets set REDIS_URL="redis://default:${REDIS_PASSWORD}@${REDIS_APP}.internal:6379" --app dungeon-crawler-api
+unset REDIS_PASSWORD
 ```
 
-#### MongoDB Atlas
+Set `MONGODB_URI` and `ALLOWED_ORIGINS` as API secrets, then deploy the API:
 
-1. Create a free cluster at [mongodb.com/atlas](https://www.mongodb.com/atlas)
-2. Add your Fly.io IP to the network access list (or allow all IPs for simplicity)
-3. Create a database user and get the connection string
+```bash
+fly deploy --config fly.toml --app dungeon-crawler-api
+fly status --app dungeon-crawler-api
+curl --fail https://dungeon-crawler-api.fly.dev/health/dependencies
+```
+
+Build the UI with the public API URL:
+
+```bash
+VITE_API_URL=https://dungeon-crawler-api.fly.dev pnpm build:ui
+```
+
+Deploy `apps/ui/dist` through the Vercel project. Because Vite embeds `VITE_API_URL` in the static bundle, changing the API URL requires a new UI build.
 
 ## License
 
