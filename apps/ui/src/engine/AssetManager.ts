@@ -1,5 +1,3 @@
-// AssetManager - Preloads and manages sprite sheets for canvas rendering
-
 import { SPRITE_SHEETS } from '@/sprites';
 
 export type SpriteSheetKey = keyof typeof SPRITE_SHEETS;
@@ -10,9 +8,7 @@ export class AssetManagerClass {
   private loaded = false;
   private loadGeneration = 0;
 
-  /**
-   * Preload all sprite sheets. Safe to call multiple times - only loads once.
-   */
+  /** Safe to call repeatedly; concurrent calls share one load. */
   async loadAll(): Promise<void> {
     if (this.loadPromise) {
       return this.loadPromise;
@@ -63,10 +59,6 @@ export class AssetManagerClass {
     });
   }
 
-  /**
-   * Get a loaded sprite sheet image.
-   * Throws if assets haven't been loaded yet.
-   */
   getSheet(key: SpriteSheetKey): HTMLImageElement {
     const img = this.images.get(key);
     if (!img) {
@@ -77,13 +69,9 @@ export class AssetManagerClass {
     return img;
   }
 
-  /**
-   * Check if all assets are loaded.
-   */
   isLoaded(): boolean {
     return this.loaded;
   }
 }
 
-// Export singleton instance and type
 export const AssetManager = new AssetManagerClass();

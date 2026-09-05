@@ -124,11 +124,13 @@ describe('GameGateway', () => {
       deltas: [],
     });
 
-    void gateway.execute({ type: 'attack' });
+    const action = gateway.execute({ type: 'attack' });
+    const rejection = expect(action).rejects.toBeInstanceOf(Error);
 
     await vi.waitFor(() => {
-      expect(gateway.getSnapshot().lifecycle.kind).toBe('retry-required');
+      expect(gateway.getSnapshot().lifecycle.kind).toBe('protocol-mismatch');
     });
+    await rejection;
     expect(gateway.getModel().getSnapshot().revision).toBe(2);
   });
 
@@ -148,7 +150,7 @@ describe('GameGateway', () => {
     const second = gateway.execute({ type: 'move', direction: 'down' });
     const latest = gateway.execute({ type: 'move', direction: 'left' });
     expect(transport.executeAction).toHaveBeenCalledTimes(1);
-    expect(gateway.getMetrics().queueDepth).toBe(2);
+    expect(gateway.getMetrics().queueDepth).toBe(3);
 
     const firstBody = actionBody(0);
     expect(firstBody).toMatchObject({
@@ -194,7 +196,7 @@ describe('GameGateway', () => {
       storage,
       credential,
       actionId: () => `action-${++actionNumber}`,
-      maxQueuedCommands: 2,
+      maxQueuedCommands: 3,
     });
     await gateway.loadGame();
     const response = deferred<GameCommandResult>();
@@ -208,7 +210,7 @@ describe('GameGateway', () => {
     ).rejects.toBeInstanceOf(CommandQueueOverflowError);
 
     expect(gateway.getMetrics()).toMatchObject({
-      queueDepth: 2,
+      queueDepth: 3,
       rejectedInputCount: 1,
     });
     expect(gateway.getSnapshot().lifecycle).toMatchObject({
@@ -260,14 +262,14 @@ describe('GameGateway', () => {
     });
   });
 
-  it('applies conflict state, discards queued input, and never replays', async () => {
+  it('applies conflict state and rebases later queued input', async () => {
     const gateway = await loadedGateway();
     const conflictState = visibleState({
       revision: 5,
       player: { x: 9, y: 8 },
     });
-    transport.executeAction.mockImplementationOnce(
-      async (_credential, body) => {
+    transport.executeAction
+      .mockImplementationOnce(async (_credential, body) => {
         const request = JSON.parse(body) as { actionId: string };
         throw new GameApiError(409, {
           error: 'Synchronize first',
@@ -276,23 +278,23 @@ describe('GameGateway', () => {
           revision: 5,
           state: conflictState,
         });
-      },
-    );
+      })
+      .mockImplementationOnce(async (_credential, body) =>
+        resultFor(body, 6, { player: { x: 8, y: 8 } }),
+      );
 
     const rejected = gateway.execute({ type: 'move', direction: 'right' });
     const queued = gateway.execute({ type: 'attack' });
 
     await expect(rejected).rejects.toBeInstanceOf(GameApiError);
-    await expect(queued).rejects.toBeInstanceOf(GameApiError);
-    expect(gateway.getModel().getSnapshot()).toMatchObject({ revision: 5 });
+    await expect(queued).resolves.toMatchObject({ revision: 6 });
+    expect(gateway.getModel().getSnapshot()).toMatchObject({ revision: 6 });
     expect(gateway.getModel().getSnapshot().player).toMatchObject({
-      x: 9,
+      x: 8,
       y: 8,
     });
-    expect(gateway.getSnapshot().lifecycle.kind).toBe(
-      'conflict-resynchronized',
-    );
-    expect(transport.executeAction).toHaveBeenCalledOnce();
+    expect(gateway.getSnapshot().lifecycle.kind).toBe('playing');
+    expect(transport.executeAction).toHaveBeenCalledTimes(2);
   });
 
   it('preserves a rate-limited action until its retry time', async () => {

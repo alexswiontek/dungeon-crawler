@@ -8,6 +8,7 @@ import type { GameClientSnapshot } from '@/game/GameClientModel';
 import { GameGateway } from '@/game/GameGateway';
 import { GameHttpClient } from '@/game/GameHttpClient';
 import { GameSessionStorage } from '@/game/GameSessionStorage';
+import { useUiStore } from '@/stores/uiStore';
 
 type AppLifecycle =
   | { readonly kind: 'restoring' }
@@ -150,6 +151,7 @@ function App() {
     selectedCharacter: CharacterType,
   ): Promise<void> => {
     if (lifecycle.kind === 'creating') return;
+    useUiStore.getState().reset();
     setPlayerName(name);
     setCharacter(selectedCharacter);
     storage.savePreferences({

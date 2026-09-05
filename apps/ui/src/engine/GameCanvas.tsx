@@ -1,5 +1,3 @@
-// GameCanvas - React wrapper for canvas rendering
-
 import type { Coordinate } from '@dungeon-crawler/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AssetManagerClass } from '@/engine/AssetManager';
@@ -83,7 +81,6 @@ export function GameCanvas({
     };
   }, [initializeRenderer]);
 
-  // Update viewport config when it changes
   useEffect(() => {
     configRef.current = {
       ...configRef.current,
@@ -98,11 +95,9 @@ export function GameCanvas({
     rendererRef.current?.setDamagedEntities(damagedEntities);
   }, [damagedEntities]);
 
-  // Canvas dimensions - internal resolution (not scaled)
   const canvasWidth = viewportTiles.x * TILE_SIZE;
   const canvasHeight = viewportTiles.y * TILE_SIZE;
 
-  // Display dimensions - scaled for screen
   const displayWidth = canvasWidth * tileScale;
   const displayHeight = canvasHeight * tileScale;
 

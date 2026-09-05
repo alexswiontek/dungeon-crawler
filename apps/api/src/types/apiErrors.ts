@@ -1,7 +1,3 @@
-/**
- * Standardized API error codes and types
- */
-
 export const ErrorCode = {
   // Game errors
   GAME_NOT_FOUND: 'GAME_NOT_FOUND',
@@ -25,9 +21,6 @@ export interface ApiError {
   details?: Record<string, unknown>;
 }
 
-/**
- * Create a standardized error response
- */
 export function createErrorResponse(
   message: string,
   code: ErrorCode,

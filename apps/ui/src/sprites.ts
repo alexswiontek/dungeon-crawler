@@ -1,11 +1,9 @@
-// Sprite configuration for the dungeon crawler game
 // All sprites are 32x32 pixels from the 32rogues asset pack
 
 import type { CharacterType, Coordinate } from '@dungeon-crawler/shared';
 
 export const TILE_SIZE = 32;
 
-// Helper to convert row.col notation to pixel coordinates
 // Row numbers are 1-indexed, columns are letters (a=0, b=1, etc.)
 function pos(row: number, col: number): Coordinate {
   return { x: col * TILE_SIZE, y: (row - 1) * TILE_SIZE };
@@ -18,8 +16,6 @@ export const CHARACTER_SPRITES = {
   bandit: pos(1, 4), // 1.e
   wizard: pos(5, 1), // 5.a
 } as const;
-
-// CharacterType is imported from @dungeon-crawler/shared
 
 // Monster sprites from monsters.png (384x416, 12x13 grid)
 export const MONSTER_SPRITES = {
@@ -40,7 +36,6 @@ export const MONSTER_SPRITES = {
   dragon: pos(9, 2), // 9.c. dragon
 } as const;
 
-// Map game enemy types to sprite keys based on variant
 type MonsterSpriteKey = keyof typeof MONSTER_SPRITES;
 
 export const ENEMY_SPRITE_MAPPING: Record<
@@ -123,7 +118,6 @@ export const TILE_SPRITES = {
   chest_open: pos(18, 1), // 18.b. chest (open)
 } as const;
 
-// Floor themes based on dungeon depth
 export type FloorTheme = 'blue' | 'stone' | 'bone' | 'red';
 
 export function getFloorTheme(floor: number): FloorTheme {
@@ -172,22 +166,19 @@ export const ITEM_SPRITES = {
   ranged_flame_staff: pos(11, 6), // 11.g. flame staff
 } as const;
 
-// Projectile type matching the server-side definition
 export type ProjectileType = 'bolt' | 'dagger' | 'magic_dagger' | 'spell';
 
-// Comprehensive projectile configuration
 export interface ProjectileConfig {
   type: ProjectileType;
-  sprite: Coordinate | null; // null for spell (uses CSS effect)
-  buttonIcon: Coordinate; // Icon to show in D-pad button
-  buttonScale: number; // Scale factor for button icon (1 = 32px, 2 = 64px, etc.)
-  buttonRotation: number; // Rotation for button icon in degrees
-  buttonOffset?: Coordinate; // Optional offset for button icon centering (in pixels at scale 1)
-  getRotation: (direction: 'left' | 'right') => number; // Calculate rotation based on direction
-  shouldFlip: (direction: 'left' | 'right') => boolean; // Whether to flip sprite
+  sprite: Coordinate | null;
+  buttonIcon: Coordinate;
+  buttonScale: number;
+  buttonRotation: number;
+  buttonOffset?: Coordinate;
+  getRotation: (direction: 'left' | 'right') => number;
+  shouldFlip: (direction: 'left' | 'right') => boolean;
 }
 
-// All projectile rendering information by type
 const PROJECTILE_CONFIGS: Record<ProjectileType, ProjectileConfig> = {
   bolt: {
     type: 'bolt',
@@ -235,7 +226,6 @@ const PROJECTILE_CONFIGS: Record<ProjectileType, ProjectileConfig> = {
   },
 };
 
-// Map character to projectile type (matches server logic)
 const CHARACTER_PROJECTILE_MAP: Record<CharacterType, ProjectileType> = {
   dwarf: 'dagger',
   bandit: 'bolt',
@@ -243,7 +233,6 @@ const CHARACTER_PROJECTILE_MAP: Record<CharacterType, ProjectileType> = {
   wizard: 'spell',
 };
 
-// Get complete projectile configuration by character
 export function getProjectileConfig(
   character: CharacterType,
 ): ProjectileConfig {
@@ -251,26 +240,22 @@ export function getProjectileConfig(
   return PROJECTILE_CONFIGS[type];
 }
 
-// Get complete projectile configuration by type
 export function getProjectileConfigByType(
   type: ProjectileType,
 ): ProjectileConfig {
   return PROJECTILE_CONFIGS[type];
 }
 
-// Get projectile type based on character (matches server logic)
 export function getProjectileType(character: CharacterType): ProjectileType {
   return CHARACTER_PROJECTILE_MAP[character];
 }
 
-// Get projectile sprite coordinates for rendering (used by Projectile component)
 export function getProjectileSpriteCoords(
   type: ProjectileType,
 ): Coordinate | null {
   return PROJECTILE_CONFIGS[type].sprite;
 }
 
-// Get sprite position for a character
 export function getCharacterSprite(character: CharacterType): {
   x: number;
   y: number;
@@ -278,7 +263,6 @@ export function getCharacterSprite(character: CharacterType): {
   return CHARACTER_SPRITES[character];
 }
 
-// Get sprite position for an enemy based on type and variant
 export function getEnemySprite(
   enemyType: keyof typeof ENEMY_SPRITE_MAPPING,
   variant: 'normal' | 'elite' | 'champion' = 'normal',
@@ -287,14 +271,12 @@ export function getEnemySprite(
   return MONSTER_SPRITES[spriteKey];
 }
 
-// Get themed floor sprite based on position and dungeon floor
 export function getFloorSprite(
   x: number,
   y: number,
   floor: number,
 ): Coordinate {
   const theme = getFloorTheme(floor);
-  // Use position to deterministically pick a floor variant (1, 2, or 3)
   const variant = ((x * 7 + y * 13) % 3) + 1;
 
   switch (theme) {
@@ -325,7 +307,6 @@ export function getFloorSprite(
   }
 }
 
-// Get themed wall sprite based on dungeon floor
 export function getWallSprite(floor: number): Coordinate {
   const theme = getFloorTheme(floor);
   switch (theme) {
@@ -339,7 +320,6 @@ export function getWallSprite(floor: number): Coordinate {
   }
 }
 
-// Get sprite position for a tile type
 export function getTileSprite(
   tileType: string,
   x: number,
@@ -358,7 +338,6 @@ export function getTileSprite(
   }
 }
 
-// Get sprite position for an item based on slot and optional item ID
 export function getItemSprite(slot?: string, itemId?: string): Coordinate {
   switch (slot) {
     case 'weapon':
@@ -368,7 +347,6 @@ export function getItemSprite(slot?: string, itemId?: string): Coordinate {
     case 'armor':
       return ITEM_SPRITES.armor_leather;
     case 'ranged':
-      // Return specific sprite based on item ID
       if (itemId?.includes('staff')) return ITEM_SPRITES.ranged_crystal_staff;
       if (itemId?.includes('crossbow')) return ITEM_SPRITES.ranged_crossbow;
       return ITEM_SPRITES.ranged_throwing_daggers;
@@ -377,7 +355,6 @@ export function getItemSprite(slot?: string, itemId?: string): Coordinate {
   }
 }
 
-// Sprite sheet URLs
 export const SPRITE_SHEETS = {
   rogues: '/sprites/rogues.png',
   monsters: '/sprites/monsters.png',

@@ -66,6 +66,15 @@ export function Game({
   const abandonedHandledRef = useRef(false);
   const lifecycle = gatewaySnapshot.lifecycle;
   const inputAllowed = permitsInput(lifecycle) && game.status === 'active';
+
+  useEffect(() => {
+    const closeGateway = (event: PageTransitionEvent) => {
+      if (!event.persisted) gateway.dispose();
+    };
+    window.addEventListener('pagehide', closeGateway);
+    return () => window.removeEventListener('pagehide', closeGateway);
+  }, [gateway]);
+
   const { handleKeyDown, handleMove, handleAttack } = useKeyboardControls(
     game,
     sendMove,
@@ -172,6 +181,18 @@ export function Game({
       {localNotice && (
         <output className="text-center text-sm text-gold py-1">
           {localNotice}
+        </output>
+      )}
+      {(gatewaySnapshot.transportState === 'connecting' ||
+        gatewaySnapshot.transportState === 'authenticating' ||
+        gatewaySnapshot.transportState === 'reconnecting') && (
+        <output className="text-center text-xs text-gray-400 py-1">
+          Reconnecting game stream...
+        </output>
+      )}
+      {gatewaySnapshot.transportState === 'degraded-http-fallback' && (
+        <output className="text-center text-xs text-gold py-1">
+          Using slower HTTP fallback
         </output>
       )}
 

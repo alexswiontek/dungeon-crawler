@@ -1,6 +1,3 @@
-/**
- * Database-specific type definitions
- */
 import type {
   EnemyType,
   EnemyVariant,
@@ -55,9 +52,6 @@ export interface StoredGameDocument {
 
 export type LegacyGameDocument = GameState;
 
-/**
- * Leaderboard entry document structure in MongoDB
- */
 export interface LeaderboardDoc {
   _id: string;
   playerName: string;

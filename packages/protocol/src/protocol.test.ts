@@ -14,6 +14,12 @@ import {
   GameErrorResponseSchema,
   GameplayProtocolVersionSchema,
   GameStateResponseSchema,
+  GameWebSocketAuthenticationRequestSchema,
+  GameWebSocketClientMessageSchema,
+  GameWebSocketCloseCode,
+  GameWebSocketCloseReason,
+  GameWebSocketCommandRequestSchema,
+  GameWebSocketServerMessageSchema,
   NewGameResponseSchema,
   projectGameState,
 } from './index.js';
@@ -271,5 +277,91 @@ describe('wire protocol', () => {
     },
   ])('rejects an invalid HTTP action body', (body) => {
     expect(GameActionRequestSchema.safeParse(body).success).toBe(false);
+  });
+
+  it('defines strict authenticated WebSocket client messages', () => {
+    expect(
+      GameWebSocketAuthenticationRequestSchema.parse({
+        type: 'authenticate',
+        protocolVersion: GAMEPLAY_PROTOCOL_VERSION,
+        sessionToken: 'private-token',
+      }),
+    ).toMatchObject({ type: 'authenticate' });
+    expect(
+      GameWebSocketCommandRequestSchema.parse({
+        type: 'command',
+        actionId: 'action-1',
+        expectedRevision: 3,
+        command: { type: 'move', direction: 'right' },
+      }),
+    ).toMatchObject({ type: 'command', expectedRevision: 3 });
+    expect(
+      GameWebSocketClientMessageSchema.safeParse({
+        type: 'authenticate',
+        protocolVersion: '1',
+        sessionToken: 'private-token',
+      }).success,
+    ).toBe(false);
+    expect(
+      GameWebSocketClientMessageSchema.safeParse({
+        type: 'unknown',
+      }).success,
+    ).toBe(false);
+    expect(
+      GameWebSocketCommandRequestSchema.safeParse({
+        type: 'command',
+        actionId: 'action-1',
+        expectedRevision: 3,
+        command: { type: 'attack' },
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('defines strict server acknowledgments, errors, and reconnect instructions', () => {
+    const state = projectGameState(stateFixture(), 1);
+    expect(
+      GameWebSocketServerMessageSchema.parse({
+        type: 'acknowledgment',
+        actionId: 'action-1',
+        revision: 1,
+        state,
+        events: [],
+        deltas: [],
+      }),
+    ).toMatchObject({ type: 'acknowledgment', revision: 1 });
+    expect(
+      GameWebSocketServerMessageSchema.parse({
+        type: 'command_error',
+        error: 'Synchronize first',
+        code: 'REVISION_CONFLICT',
+        actionId: 'action-1',
+        revision: 1,
+        state,
+      }),
+    ).toMatchObject({ type: 'command_error', actionId: 'action-1' });
+    expect(
+      GameWebSocketServerMessageSchema.parse({
+        type: 'reconnect',
+        reason: 'server_shutdown',
+      }),
+    ).toEqual({ type: 'reconnect', reason: 'server_shutdown' });
+  });
+
+  it('keeps deliberate WebSocket close mappings stable', () => {
+    expect(GameWebSocketCloseCode).toEqual({
+      AUTHENTICATION_TIMEOUT: 4000,
+      AUTHENTICATION_FAILED: 4001,
+      PROTOCOL_MISMATCH: 4002,
+      CONNECTION_REPLACED: 4003,
+      MALFORMED_MESSAGE: 4004,
+      MESSAGE_TOO_LARGE: 4005,
+      QUEUE_OVERFLOW: 4006,
+      IDLE_TIMEOUT: 4007,
+      SERVER_SHUTDOWN: 4008,
+      COMMAND_BEFORE_AUTHENTICATION: 4009,
+      REPEATED_AUTHENTICATION: 4010,
+    });
+    expect(Object.values(GameWebSocketCloseReason)).not.toContain('');
   });
 });

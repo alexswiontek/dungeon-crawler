@@ -1,9 +1,3 @@
-/**
- * Database operation wrappers with comprehensive error handling
- * These helpers log errors comprehensively and propagate exceptions after logging
- * to allow callers to handle failures appropriately
- */
-
 import type { FastifyBaseLogger } from 'fastify';
 import type {
   Collection,
@@ -13,10 +7,6 @@ import type {
 } from 'mongodb';
 import { logAndThrow } from './errorHandler.js';
 
-/**
- * Centralized error handler for database operations
- * Logs the error with context and re-throws it for caller handling
- */
 function handleDatabaseError(
   err: unknown,
   logger: FastifyBaseLogger | Console,
@@ -30,17 +20,6 @@ function handleDatabaseError(
   });
 }
 
-/**
- * Safely insert a document into a collection with error handling
- * Logs errors comprehensively but throws after logging to allow callers to handle failures
- *
- * @param collection - MongoDB collection to insert into
- * @param document - Document to insert
- * @param logger - Optional logger for error reporting
- * @param context - Context description for error messages (e.g., "creating new game")
- * @returns The inserted document ID
- * @throws Error if the insert operation fails
- */
 export async function safeInsertOne<T extends Document>(
   collection: Collection<T>,
   document: OptionalUnlessRequiredId<T>,
@@ -55,18 +34,6 @@ export async function safeInsertOne<T extends Document>(
   }
 }
 
-/**
- * Safely replace a document in a collection with error handling
- * Logs errors comprehensively but throws after logging to allow callers to handle failures
- *
- * @param collection - MongoDB collection to replace in
- * @param filter - Filter to find document to replace
- * @param document - Replacement document
- * @param logger - Optional logger for error reporting
- * @param context - Context description for error messages (e.g., "saving game state")
- * @returns Number of documents modified
- * @throws Error if the replace operation fails
- */
 export async function safeReplaceOne<T extends Document>(
   collection: Collection<T>,
   filter: Filter<T>,
@@ -82,17 +49,6 @@ export async function safeReplaceOne<T extends Document>(
   }
 }
 
-/**
- * Safely delete a document from a collection with error handling
- * Logs errors comprehensively but throws after logging to allow callers to handle failures
- *
- * @param collection - MongoDB collection to delete from
- * @param filter - Filter to find document to delete
- * @param logger - Optional logger for error reporting
- * @param context - Context description for error messages (e.g., "removing old game")
- * @returns Number of documents deleted
- * @throws Error if the delete operation fails
- */
 export async function safeDeleteOne<T extends Document>(
   collection: Collection<T>,
   filter: Filter<T>,

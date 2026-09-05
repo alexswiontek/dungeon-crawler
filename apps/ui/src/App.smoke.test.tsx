@@ -16,6 +16,7 @@ import {
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '@/App';
+import { useUiStore } from '@/stores/uiStore';
 import { StoreHelpers } from '@/test/helpers/storeHelpers';
 
 describe('browser gameplay smoke test', () => {
@@ -231,6 +232,26 @@ describe('browser gameplay smoke test', () => {
     expect(
       screen.queryByText('The command is not valid for the current game state'),
     ).toBeNull();
+  });
+
+  it('clears projectiles left by the previous game before starting another', async () => {
+    useUiStore.getState().addEvents([
+      StoreHelpers.event({
+        id: 'old-spell',
+        type: 'ranged_attack',
+        message: 'Old spell',
+        data: {
+          targetX: 8,
+          targetY: 5,
+          damage: 6,
+          attackType: 'spell',
+        },
+      }),
+    ]);
+
+    await startGame();
+
+    expect(document.querySelector('.spell-orb')).toBeNull();
   });
 
   async function startGame(): Promise<HTMLElement> {

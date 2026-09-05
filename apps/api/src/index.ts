@@ -1,8 +1,12 @@
 import 'dotenv/config';
-import { GAMEPLAY_PROTOCOL_HEADER } from '@dungeon-crawler/protocol';
+import {
+  GAME_WEBSOCKET_MESSAGE_SIZE_LIMIT,
+  GAMEPLAY_PROTOCOL_HEADER,
+} from '@dungeon-crawler/protocol';
 import cors, { type FastifyCorsOptions } from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import {
   serializerCompiler,
@@ -10,6 +14,10 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import { gameRoutes } from '@/routes/game.js';
+import {
+  GameWebSocketHub,
+  registerGameWebSocketRoute,
+} from '@/routes/gameWebSocket.js';
 import { leaderboardRoutes } from '@/routes/leaderboard.js';
 import {
   closeDatabase,
@@ -33,13 +41,12 @@ import {
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-// Validate PORT - use console.error here since logger isn't initialized yet
+// Fastify's logger is not initialized yet.
 if (Number.isNaN(PORT) || PORT < 1 || PORT > 65535) {
   console.error(`Invalid PORT: ${process.env.PORT}. Server cannot start.`);
   process.exit(1);
 }
 
-// CORS Configuration - filter out empty strings and whitespace
 const ALLOWED_ORIGINS = (
   process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173']
 )
@@ -54,7 +61,7 @@ const fastify = Fastify({
           level: 'info',
         }
       : {
-          level: 'info', // Log everything in development
+          level: 'info',
           transport: {
             target: 'pino-pretty',
             options: {
@@ -67,9 +74,12 @@ const fastify = Fastify({
         },
 }).withTypeProvider<ZodTypeProvider>();
 
-// Set Zod validator and serializer
 fastify.setValidatorCompiler(validatorCompiler);
 fastify.setSerializerCompiler(serializerCompiler);
+
+await fastify.register(websocket, {
+  options: { maxPayload: GAME_WEBSOCKET_MESSAGE_SIZE_LIMIT * 8 },
+});
 
 await fastify.register(cors, {
   delegator: (req, cb) => {
@@ -80,13 +90,12 @@ await fastify.register(cors, {
         origin: string | undefined,
         callback: (err: Error | null, origin: string | boolean) => void,
       ) => {
-        // Always allow health check endpoint (needed for Docker healthcheck)
+        // Docker health checks may not send an Origin header.
         if (req.url.startsWith('/health')) {
           return callback(null, true);
         }
 
-        // Allow null origin in development OR when accessing via localhost
-        // (localhost Docker setups can have null origins for SSR/static pages)
+        // Local Docker and development requests may have no Origin header.
         const isLocalhost =
           req.headers.host?.includes('localhost') ||
           req.headers.host?.includes('127.0.0.1');
@@ -111,23 +120,21 @@ await fastify.register(cors, {
   },
 });
 
-// Security headers
 await fastify.register(helmet, {
-  contentSecurityPolicy: false, // Let frontend handle CSP if needed
+  contentSecurityPolicy: false,
 });
 
-// Rate limiting
 await fastify.register(rateLimit, {
   global: true,
   max: RATE_LIMIT_MAX_REQUESTS,
   timeWindow: RATE_LIMIT_TIME_WINDOW,
 });
 
-// Register routes
+const gameWebSocketHub = new GameWebSocketHub(fastify);
+registerGameWebSocketRoute(fastify, gameWebSocketHub);
 await fastify.register(gameRoutes);
 await fastify.register(leaderboardRoutes, { prefix: '/leaderboard' });
 
-// Health check
 fastify.get('/health', async () => ({ status: 'ok' }));
 
 fastify.get('/health/dependencies', async (_request, reply) => {
@@ -173,18 +180,18 @@ const start = async () => {
     fastify.log.error({ err: error }, 'Failed to start server');
     await closeDatabase();
     await closeRedis();
-    await fastify.close().catch(() => {}); // Ignore close errors
+    await fastify.close().catch(() => {});
     process.exit(1);
   }
 };
 
-// Graceful shutdown
 const shutdown = async () => {
   stopLeaderboardReconciliation();
+  await gameWebSocketHub.shutdown();
   await flushGameCheckpoints();
+  await fastify.close();
   await closeRedis();
   await closeDatabase();
-  await fastify.close();
   process.exit(0);
 };
 

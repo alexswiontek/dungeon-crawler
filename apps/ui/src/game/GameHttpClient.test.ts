@@ -4,10 +4,11 @@ import {
   type GameActionRequest,
 } from '@dungeon-crawler/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { normalizeApiBaseUrl } from '@/config/apiBaseUrl';
+import { gameWebSocketUrl, normalizeApiBaseUrl } from '@/config/apiBaseUrl';
 import {
   GameApiError,
   GameHttpClient,
+  GameNetworkError,
   GameProtocolError,
   GameProtocolMismatchError,
   GameRequestTimeoutError,
@@ -22,6 +23,22 @@ const state = StoreHelpers.visibleGameState({ _id: credential.gameId });
 
 describe('GameHttpClient', () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it('derives credential-free WS and WSS URLs from the API base', () => {
+    expect(
+      gameWebSocketUrl(credential.gameId, '/api', 'http://localhost:5173/play'),
+    ).toBe('ws://localhost:5173/api/games/client-game/stream');
+    expect(
+      gameWebSocketUrl(credential.gameId, '', 'http://localhost:5173/play'),
+    ).toBe('ws://localhost:5173/games/client-game/stream');
+    const production = gameWebSocketUrl(
+      credential.gameId,
+      'https://api.example.com',
+      'https://ui.example.com',
+    );
+    expect(production).toBe('wss://api.example.com/games/client-game/stream');
+    expect(production).not.toContain(credential.sessionToken);
+  });
 
   it('invokes the native global fetch with its required browser receiver', async () => {
     const receiverSensitiveFetch = vi.fn(function (
@@ -176,12 +193,14 @@ describe('GameHttpClient', () => {
     expect(normalizeApiBaseUrl(value)).toBe(expected);
   });
 
-  it.each(['api', '//example.com/api', 'ftp://example.com/api'])(
-    'rejects malformed API base %s',
-    (value) => {
-      expect(() => normalizeApiBaseUrl(value)).toThrow(TypeError);
-    },
-  );
+  it.each([
+    'api',
+    '//example.com/api',
+    'ftp://example.com/api',
+    'https://user:password@example.com/api',
+  ])('rejects malformed API base %s', (value) => {
+    expect(() => normalizeApiBaseUrl(value)).toThrow(TypeError);
+  });
 
   it.each([
     ['missing', null],
@@ -238,6 +257,17 @@ describe('GameHttpClient', () => {
     );
     await expect(client.abandonGame(credential)).rejects.toBeInstanceOf(
       GameProtocolMismatchError,
+    );
+  });
+
+  it('treats an unversioned proxy failure as a network error', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('Bad Gateway', { status: 502 }));
+    const client = new GameHttpClient({ baseUrl: '/api', fetch: fetchMock });
+
+    await expect(client.loadGame(credential)).rejects.toBeInstanceOf(
+      GameNetworkError,
     );
   });
 

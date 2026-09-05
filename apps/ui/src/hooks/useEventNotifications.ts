@@ -28,7 +28,6 @@ const EVENT_CONFIG: Record<string, EventType> = {
   item_picked_up: { variant: 'neutral', isToast: false },
 } as const;
 
-// Type guard to validate event config exists
 function hasEventConfig(
   eventType: string,
 ): eventType is keyof typeof EVENT_CONFIG {
@@ -43,7 +42,6 @@ export function useEventNotifications(events: GameEvent[], hasPlayer: boolean) {
   const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processedEventsRef = useRef<Set<string>>(new Set());
 
-  // Reset all state when player is lost (game restart/disconnect)
   useEffect(() => {
     if (!hasPlayer) {
       setToasts([]);
@@ -60,7 +58,6 @@ export function useEventNotifications(events: GameEvent[], hasPlayer: boolean) {
     events.forEach((event) => {
       if (processedEventsRef.current.has(event.id)) return;
 
-      // Type guard to validate event config exists
       if (!hasEventConfig(event.type)) return;
 
       const config = EVENT_CONFIG[event.type];
@@ -70,21 +67,18 @@ export function useEventNotifications(events: GameEvent[], hasPlayer: boolean) {
 
       if (config.isToast) {
         const id = ++toastIdRef.current;
-        setToasts((prev) => [...prev, { id, message: event.message }]);
+        setToasts([{ id, message: event.message }]);
       } else {
-        // Clear existing tooltip timer
         if (tooltipTimerRef.current) {
           clearTimeout(tooltipTimerRef.current);
         }
 
-        // Set new tooltip
         setTooltip({
           id: ++tooltipIdRef.current,
           message: event.message,
           variant: config.variant,
         });
 
-        // Auto-dismiss tooltip after 3 seconds
         tooltipTimerRef.current = setTimeout(() => {
           setTooltip(null);
           tooltipTimerRef.current = null;
@@ -93,7 +87,6 @@ export function useEventNotifications(events: GameEvent[], hasPlayer: boolean) {
     });
   }, [events, hasPlayer]);
 
-  // Separate effect for cleanup on unmount only
   useEffect(() => {
     return () => {
       if (tooltipTimerRef.current) {

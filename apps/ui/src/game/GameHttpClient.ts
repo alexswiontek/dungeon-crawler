@@ -11,7 +11,11 @@ import {
   type NewGameResponse,
   NewGameResponseSchema,
 } from '@dungeon-crawler/protocol';
-import { API_BASE_URL, normalizeApiBaseUrl } from '@/config/apiBaseUrl';
+import {
+  API_BASE_URL,
+  gameWebSocketUrl,
+  normalizeApiBaseUrl,
+} from '@/config/apiBaseUrl';
 
 export const DEFAULT_GAME_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -34,6 +38,7 @@ export interface GameTransport {
     serializedBody: string,
   ): Promise<GameCommandResult>;
   abandonGame(credential: GameSessionCredential): Promise<void>;
+  openGameSocket?(gameId: string): WebSocket;
 }
 
 interface RuntimeSchema<T> {
@@ -85,6 +90,7 @@ interface GameHttpClientOptions {
   readonly fetch?: typeof fetch;
   readonly now?: () => number;
   readonly requestTimeoutMs?: number;
+  readonly enableWebSocket?: boolean;
 }
 
 function authorization(credential: GameSessionCredential): HeadersInit {
@@ -105,6 +111,7 @@ export class GameHttpClient implements GameTransport {
   private readonly fetchImplementation: typeof fetch;
   private readonly now: () => number;
   private readonly requestTimeoutMs: number;
+  readonly openGameSocket?: (gameId: string) => WebSocket;
 
   constructor(options: GameHttpClientOptions = {}) {
     this.baseUrl =
@@ -118,6 +125,10 @@ export class GameHttpClient implements GameTransport {
       options.requestTimeoutMs ?? DEFAULT_GAME_REQUEST_TIMEOUT_MS;
     if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) {
       throw new RangeError('requestTimeoutMs must be a positive number.');
+    }
+    if (options.enableWebSocket ?? import.meta.env.MODE !== 'test') {
+      this.openGameSocket = (gameId) =>
+        new WebSocket(gameWebSocketUrl(gameId, this.baseUrl));
     }
   }
 
@@ -200,6 +211,14 @@ export class GameHttpClient implements GameTransport {
 
   private assertVersion(response: Response): void {
     const version = response.headers.get(GAMEPLAY_PROTOCOL_HEADER);
+    const contentType = response.headers.get('Content-Type') ?? '';
+    if (
+      version === null &&
+      response.status >= 500 &&
+      !contentType.includes('application/json')
+    ) {
+      throw new GameNetworkError();
+    }
     if (version !== GAMEPLAY_PROTOCOL_VERSION) {
       throw new GameProtocolMismatchError(version);
     }

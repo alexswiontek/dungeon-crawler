@@ -12,7 +12,6 @@ export function useProjectileEvents(
   const projectileIdRef = useRef(0);
   const processedProjectileEventsRef = useRef<Set<string>>(new Set());
 
-  // Reset state when player position is lost (game restart/disconnect)
   useEffect(() => {
     if (playerX === undefined || playerY === undefined) {
       setProjectiles([]);

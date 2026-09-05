@@ -1,121 +1,133 @@
 # Dungeon Crawler
 
-A browser-based, server-authoritative dungeon crawler built with TypeScript, React, Fastify, Redis, and MongoDB. The player fights monsters, collects equipment, and tries to escape 20 procedurally generated floors.
+Demo project to demonstrate how a React client, a Fastify API, WebSockets, Redis, MongoDB, automated tests, containers, and cloud deployment can work together in a full game project. 
+
+To play the deployed version, use the website link in this repository's GitHub About section. The game itself is a browser-based dungeon crawler: choose a character, fight monsters, collect equipment, and try to escape 20 procedurally generated floors.
+
+## What the demo covers
+
+- Server-authoritative game rules with no client prediction
+- Authenticated WebSocket gameplay with an HTTP fallback
+- Redis command journaling and MongoDB checkpoints
+- Recovery through deterministic command replay
+- Filtered client state that hides unexplored terrain and enemies
+- A React interface with a Canvas 2D game renderer
+- Unit, integration, network, and browser-facing test coverage
+- Docker, Fly.io, and static UI deployment configuration
+
+The current deployment assumes one API machine. Redis checks revisions and action identity atomically, but the API does not implement distributed locks or ownership across multiple machines.
+
+## How to play
+
+1. Enter a player name and choose Dwarf, Elf, Bandit, or Wizard.
+2. Move with WASD, the arrow keys, or the on-screen controls.
+3. Walk into an enemy for melee combat, or press Space for a ranged attack.
+4. Pick up potions and stronger equipment.
+5. Walk onto the stairs to descend.
+6. Escape floor 20 to win.
 
 ## Architecture
 
-Gameplay uses authenticated HTTP commands. The API keeps active games in memory and commits each accepted command to a region-local Redis journal before responding. A background worker writes full MongoDB checkpoints and trims confirmed Redis journal entries. Compact retained receipts make exact retries idempotent. The browser receives only a filtered projection of explored terrain, remembered items on explored tiles, and currently visible enemies.
+Gameplay commands travel over an authenticated WebSocket connection. The API keeps active games in memory and records each accepted command in Redis before acknowledging it. A background worker periodically writes complete checkpoints to MongoDB and removes confirmed journal entries from Redis.
 
-The workspace has five code packages:
+If the API restarts or loses an in-memory game, it loads the latest MongoDB checkpoint and replays newer Redis entries. Revision, protocol, reducer, random-state, and state-hash checks prevent partial or incompatible state from loading.
+
+The browser receives a filtered view of the game: explored terrain, remembered items on explored tiles, and currently visible enemies. Session creation, recovery, migration, deletion, health checks, leaderboards, and the degraded gameplay fallback use HTTP.
+
+`GameGateway` is the browser's gameplay boundary. It can pipeline up to eight accepted inputs. The server processes up to 16 unfinished commands per socket in order. After four consecutive socket failures, the gateway switches to sequential HTTP while preserving command order and identity.
 
 ```text
 dungeon-crawler/
 ├── apps/
-│   ├── api/          Fastify API, Redis journal, MongoDB checkpoints, health checks, and leaderboard routes
-│   ├── redis/        Redis image with AOF persistence for Fly
-│   └── ui/           React application and demand-driven Canvas 2D renderer
+│   ├── api/          Fastify API, persistence, health checks, and leaderboards
+│   ├── redis/        Redis image with AOF persistence for Fly.io
+│   └── ui/           React application and Canvas 2D renderer
 ├── packages/
-│   ├── domain/       Deterministic game rules, generation, combat, progression, and visibility
-│   ├── protocol/     Runtime schemas, wire types, and filtered client projections
+│   ├── domain/       Game rules, generation, combat, progression, and visibility
+│   ├── protocol/     Runtime schemas, wire types, and client projections
 │   └── shared/       Compatibility exports for domain and protocol consumers
 ├── docker-compose.yml
 ├── pnpm-workspace.yaml
 └── vitest.workspace.ts
 ```
 
-`GameGateway` is the browser's only authenticated gameplay boundary, and `GameClientModel` is its only gameplay representation. The gateway sends one request at a time and preserves accepted input in a bounded FIFO queue. The API's command service is the only production mutation path. Gameplay does not use WebSockets, polling, or client prediction.
-
-The deployed design assumes one API machine. Redis still checks revisions and action identity atomically, but the API does not use distributed locks or multi-machine ownership.
-
-## Pinned toolchain
-
-Development, package metadata, and both application Dockerfiles use these exact versions:
+## Requirements
 
 - Node.js 24.19.0
 - pnpm 11.24.0
+- MongoDB
+- Redis
 
-The tracked `.node-version` works with version managers such as fnm, nodenv, and asdf configurations that honor that file. Activate Node, then let Corepack select the `packageManager` version from `package.json`:
+The repository pins Node in `.node-version` and pnpm in `package.json`.
 
 ```bash
 fnm use
 corepack enable
 corepack prepare pnpm@11.24.0 --activate
-node --version
-pnpm --version
-```
-
-The two version commands must print `v24.19.0` and `11.24.0` before installation.
-
-## Installation
-
-Install only from the committed lockfile:
-
-```bash
 pnpm install --frozen-lockfile
 ```
 
-A stale manifest or lockfile is an error. Do not replace the frozen install with an unfrozen fallback.
-
-## Environment contract
-
-Environment files are local inputs and must not be committed. Never print or store MongoDB credentials or session tokens in source, documentation, build arguments, image labels, URLs, action bodies, or logs.
-
-| Variable | Scope | Requirement and default | Sensitive | Timing and behavior |
-| --- | --- | --- | --- | --- |
-| `MONGODB_URI` | API | Required; no default | Yes | API runtime. Startup fails before listening if it is missing or MongoDB cannot be reached. The selected database is taken from the URI. |
-| `REDIS_URL` | API | Required; no default | Yes | API runtime. Startup fails before listening if Redis cannot be reached. Keep credentials in the deployment secret store. |
-| `PORT` | API | Optional; default `3000` | No | API runtime. Values outside `1` through `65535` stop startup. |
-| `ALLOWED_ORIGINS` | API | Optional; default `http://localhost:5173` | No | API runtime. Comma-separated exact origins are allowed. Development and localhost requests may omit `Origin`; production requests to a non-local host must supply an allowed origin. `/health` is always allowed. |
-| `NODE_ENV` | API | Optional; behavior defaults to non-production development mode | No | API runtime. `production` uses JSON logging and stricter null-origin CORS behavior; `test` suppresses normal command outcome logs. |
-| `CHECKPOINT_COMMAND_INTERVAL` | API | Optional; default `20` | No | Maximum uncheckpointed command count before the write-behind worker schedules a MongoDB checkpoint. |
-| `CHECKPOINT_TIME_INTERVAL_MS` | API | Optional; default `30000` | No | Maximum time an active dirty game waits for a MongoDB checkpoint. Floor changes and terminal states checkpoint immediately. |
-| `VITE_API_URL` | UI | Optional; default `/api` | No | UI build time. Empty and whitespace-only values use `/api`; malformed values stop the build. Vite embeds the value in the static JavaScript bundle. An nginx-served image cannot change it at runtime. |
-| `RUN_MONGODB_INTEGRATION` | Tests | Test script sets it to `1` | No | Test process only. It enables the five real-MongoDB migration, durability, and concurrency cases; the standard suite skips them. |
-| `RUN_REDIS_INTEGRATION` | Tests | Test script sets it to `1` | No | Test process only. It enables the two real-Redis atomic commit and checkpoint-trimming cases; the standard suite skips them. |
-| `MONGODB_TEST_URI` | Tests | Optional; default `mongodb://127.0.0.1:27017/?directConnection=true` | Treat as sensitive when it contains credentials | Test process only. It must target a disposable local test service, never a production or shared database. Each run creates and drops its own UUID-named database. |
-| `REDIS_TEST_URL` | Tests | Optional; default `redis://127.0.0.1:6379` | Treat as sensitive when it contains credentials | Test process only. Integration tests use a unique key prefix and delete only keys under that prefix. |
-| `BENCHMARK_API_URL` | Benchmark | Optional; default `http://127.0.0.1:3000` | No | Base URL for the HTTP movement benchmark. |
-| `BENCHMARK_MOVEMENTS` | Benchmark | Optional; default `20` | No | Number of valid warm movements to measure. |
-
-The API process loads `apps/api/.env` through dotenv when present. `apps/api/.env.example` and `apps/ui/.env.example` are placeholder references only. Keep real values in untracked local files or the owner's deployment secret store.
-
 ## Local development
 
-Start local MongoDB and Redis services, then run the API and UI with `MONGODB_URI` and `REDIS_URL` set in your local environment:
+Start MongoDB and Redis, then run the API and UI:
 
 ```bash
 docker compose up -d mongo redis
 pnpm dev
 ```
 
-If Redis is already running through Homebrew, start only MongoDB and set `REDIS_URL=redis://127.0.0.1:6379` in `apps/api/.env` before running `pnpm dev`.
+The UI runs at `http://localhost:5173` and proxies API requests and WebSocket upgrades to `http://127.0.0.1:3000`.
 
-The UI listens on `http://localhost:5173`, proxies same-origin `/api` requests to the API at `http://127.0.0.1:3000`, and keeps the session credential out of the URL. Focused commands are also available:
+To run either application with its required workspace watchers:
 
 ```bash
 pnpm dev:api
 pnpm dev:ui
 ```
 
-Each focused command starts the selected application plus the workspace dependency watchers it needs, so it works from a clean checkout and refreshes generated runtime exports after source edits.
+If Redis already runs through Homebrew, start only MongoDB and set `REDIS_URL=redis://127.0.0.1:6379` in `apps/api/.env` before starting the applications.
 
-## Legacy save migration
+## Configuration
 
-The HTTP client recognizes the exact one-hour legacy browser record written by the WebSocket release. It preserves the old game identifier, carries the player name and character into versioned preferences, and requests a one-time server migration. The API atomically wraps the root-level legacy game document in the authenticated persistence envelope, initializes deterministic random state, and returns a new session token. The browser removes the legacy record only after storing the new credential pair.
+Environment files are local inputs and must not be committed. Keep MongoDB credentials, Redis credentials, and session tokens out of source, documentation, build arguments, URLs, action bodies, and logs.
 
-The migration endpoint matches only active documents that lack both the authenticated envelope and token hash. Possession of the unguessable legacy game identifier remains the migration credential, matching the access boundary of the legacy API, and the endpoint cannot be reused after the atomic conversion succeeds.
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `MONGODB_URI` | Yes | None | MongoDB connection used by the API. Startup fails if the database is unavailable. |
+| `REDIS_URL` | Yes | None | Redis connection used by the API. Startup fails if Redis is unavailable. |
+| `PORT` | No | `3000` | API port. |
+| `ALLOWED_ORIGINS` | No | `http://localhost:5173` | Comma-separated browser origins allowed by the API. |
+| `NODE_ENV` | No | Development behavior | Enables production logging and CORS behavior or test log suppression. |
+| `CHECKPOINT_COMMAND_INTERVAL` | No | `20` | Commands allowed between scheduled MongoDB checkpoints. |
+| `CHECKPOINT_TIME_INTERVAL_MS` | No | `30000` | Maximum time a dirty active game waits for a checkpoint. |
+| `VITE_API_URL` | No | `/api` | API base URL embedded in the UI build. The client derives its WebSocket URL from it. |
+
+The API reads `apps/api/.env` when present. The example environment files contain placeholders only.
+
+### Test and benchmark configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MONGODB_TEST_URI` | `mongodb://127.0.0.1:27017/?directConnection=true` | Disposable local MongoDB used by integration tests. |
+| `REDIS_TEST_URL` | `redis://127.0.0.1:6379` | Local Redis used by integration tests with isolated key prefixes. |
+| `BENCHMARK_API_URL` | `http://127.0.0.1:3000` | API tested by the command benchmarks. |
+| `BENCHMARK_ORIGIN` | None | Allowed UI origin sent with benchmark requests when required. |
+| `BENCHMARK_MOVEMENTS` | `20` | Valid movements measured by each benchmark. |
+| `BENCHMARK_INPUT_INTERVAL_MS` | `80` | Delay between WebSocket inputs. Use `0` for a capacity burst. |
+
+The test scripts set their own integration flags. Test services must be disposable and must never point to production or shared databases.
 
 ## Verification
 
-The normal check is read-only:
+Run the standard checks:
 
 ```bash
 pnpm run verify
 ```
 
-It checks formatting, TypeScript, lint rules, and all five standard Vitest projects. It does not enable the MongoDB or Redis integration gates and does not rewrite source. Apply formatting explicitly with `pnpm format`.
+This checks formatting, types, lint rules, and the standard test projects without changing source files. Run `pnpm format` to apply formatting.
 
-Run the extended checks before a release handoff. The integration command requires disposable local MongoDB and Redis services:
+The extended checks require local MongoDB and Redis services:
 
 ```bash
 pnpm test:coverage
@@ -125,39 +137,34 @@ pnpm build:ui
 git diff --check
 ```
 
-With the API running locally, measure valid back-and-forth movement over known open tiles:
+With the API running, the command benchmarks compare sequential HTTP movement with pipelined WebSocket movement:
 
 ```bash
 pnpm --filter @dungeon-crawler/api benchmark:commands
+pnpm --filter @dungeon-crawler/api benchmark:websocket
 ```
-
-The benchmark prints the median, p95, maximum, errors, retries, rejections, and whether the 50 ms local p95 target was met.
-
-`pnpm typecheck` resolves workspace imports to source through typecheck-only configurations. Runtime exports still point to built JavaScript and declarations in each package's `dist` directory. Type checking is non-emitting and does not require a preliminary build.
 
 ## Production builds
 
-The root production build runs the required order: domain, protocol, shared, API, then UI. The UI-only production command builds domain, protocol, shared, then UI.
+The root build compiles the workspace packages, API, and UI in dependency order. The UI build compiles only the packages needed by the browser application.
 
 ```bash
 pnpm build
 pnpm build:ui
 ```
 
-Generated `dist`, coverage, and TypeScript build artifacts are ignored and must not be committed.
+Generated `dist`, coverage, and TypeScript build files are ignored.
 
 ## Containers
 
-Both application images use Node 24.19.0 and Corepack-managed pnpm 11.24.0. Their dependency layers copy every workspace manifest and require a frozen lockfile. The API image builds and carries domain, protocol, shared, and API output. The UI image contains the Vite bundle plus the nginx `/api` proxy and SPA fallback.
-
-Build the images directly:
+Build the API and UI images:
 
 ```bash
 docker build --no-cache -f apps/api/Dockerfile -t dungeon-crawler-api:local .
 docker build --no-cache -f apps/ui/Dockerfile -t dungeon-crawler-ui:local .
 ```
 
-For an isolated Compose smoke run, choose a unique project name and host port so its network, MongoDB volume, and port cannot collide with another run:
+Run an isolated Compose smoke test with a unique project name and host ports:
 
 ```bash
 MONGO_HOST_PORT=27018 REDIS_HOST_PORT=6380 docker compose -p dc-smoke up -d --build --wait
@@ -168,30 +175,25 @@ curl --fail http://localhost:5173/nonexistent-spa-route
 docker compose -p dc-smoke down --volumes
 ```
 
-MongoDB and Redis run as separate Compose services. Redis uses AOF persistence with `appendfsync everysec`. API startup creates the required MongoDB indexes, `/health` is a database-free liveness route, and `/health/dependencies` checks MongoDB and Redis. The API port is exposed only inside the Compose network so nginx is the sole trusted proxy boundary. The nginx container serves the built UI, forwards client identity for per-client rate limiting, falls back to `index.html` for client routes, and proxies `/api` to the API service.
+The Compose stack runs MongoDB and Redis as separate services. The API port stays inside the Compose network, so nginx is the browser-facing proxy for HTTP and WebSocket traffic.
 
-## Persistence and recovery
+## Persistence limits
 
-Each accepted command advances the Redis revision through one atomic Lua operation. The operation checks the expected revision and action receipt, appends the command and deterministic replay boundary, records the retry receipt, and refreshes the game expiration. The API publishes the new in-memory state only after Redis accepts the commit.
+MongoDB is the long-term checkpoint store. Redis holds newer accepted commands so the API can rebuild current state after a restart.
 
-MongoDB checkpoints run outside the response path. On a cache miss or restart, the API loads the latest checkpoint, replays newer Redis entries in order, and validates the revision sequence, reducer version, protocol version, random state, and resulting state hash. A gap or mismatch returns a typed service-unavailable error instead of installing partial state.
+The Fly.io Redis configuration uses one machine, one volume, and AOF persistence with `appendfsync everysec`. A sudden Redis host failure can lose about one second of acknowledged commands. Losing the Redis volume restores each game only to its latest confirmed MongoDB checkpoint.
 
-The Fly Redis configuration uses one machine, one volume, and AOF with `appendfsync everysec`. A sudden Redis host failure can lose about one second of acknowledged journal writes. Total Redis volume loss restores a game only to its latest confirmed MongoDB checkpoint. MongoDB is therefore the long-term checkpoint store, not the current state of every active game.
+## Legacy save migration
 
-## How to play
+The client can migrate the browser save format from the earlier WebSocket release. It keeps the game ID and player preferences, requests a one-time server migration, stores the new session credentials, and then removes the legacy record.
 
-1. Enter a player name and choose Dwarf, Elf, Bandit, or Wizard.
-2. Move with WASD or the arrow keys.
-3. Walk into an enemy for melee combat, or press Space for a ranged attack.
-4. Pick up potions and stronger equipment.
-5. Walk onto the stairs to descend.
-6. Escape floor 20 to win.
+The migration applies only to active legacy documents without the authenticated persistence envelope or token hash. It cannot be repeated after conversion.
 
 ## Deployment
 
-The checked-in Fly configuration uses a Redis app named `dungeon-crawler-redis`, one 1 GB volume in `lax`, and a private Fly network connection. If that name is unavailable, change `app` in `fly.redis.toml` and use the same name in the commands below.
+The checked-in Fly.io configuration expects a Redis app named `dungeon-crawler-redis` with one 1 GB volume in `lax`. Change `app` in `fly.redis.toml` if that name is unavailable.
 
-Create a password locally, provision the Redis app and volume, deploy Redis, and attach its private URL to the API. Do not paste the password or connection URL into chat, source files, or command output:
+Provision Redis and attach its private URL to the API. Keep the generated password and connection URL out of chat, source files, and command output.
 
 ```bash
 export REDIS_APP=dungeon-crawler-redis
@@ -204,23 +206,21 @@ fly secrets set REDIS_URL="redis://default:${REDIS_PASSWORD}@${REDIS_APP}.intern
 unset REDIS_PASSWORD
 ```
 
-Set `MONGODB_URI` and `ALLOWED_ORIGINS` as API secrets if they are not already present, then deploy the API from the repository root:
+Set `MONGODB_URI` and `ALLOWED_ORIGINS` as API secrets, then deploy the API:
 
 ```bash
 fly deploy --config fly.toml --app dungeon-crawler-api
 fly status --app dungeon-crawler-api
+curl --fail https://dungeon-crawler-api.fly.dev/health/dependencies
 ```
 
-After the dependency health route passes, deploy the UI preview with `VITE_API_URL` set to the public Fly API URL. Vite embeds this value into the static bundle:
+Build the UI with the public API URL:
 
 ```bash
-curl --fail https://dungeon-crawler-api.fly.dev/health/dependencies
 VITE_API_URL=https://dungeon-crawler-api.fly.dev pnpm build:ui
 ```
 
-Deploy `apps/ui/dist` through the existing Vercel project, then run the HTTP movement benchmark against the deployed API and play at least 20 valid warm movements in the preview. Record median, p95, maximum, errors, retries, queue depth, and rejected or lost input separately from initial hydration. Do not add WebSockets unless those measurements still miss the documented latency or ordering goals.
-
-The UI builds as a static Vite application and can deploy to Vercel with `pnpm build:ui` and the `apps/ui/dist` output directory. Set `VITE_API_URL` to the public Fly API URL before building because Vite embeds it in the browser bundle.
+Deploy `apps/ui/dist` through the Vercel project. Because Vite embeds `VITE_API_URL` in the static bundle, changing the API URL requires a new UI build.
 
 ## License
 

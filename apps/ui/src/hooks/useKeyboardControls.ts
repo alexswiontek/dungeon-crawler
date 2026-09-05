@@ -33,7 +33,6 @@ export function useKeyboardControls(
   sendMove: (dir: Direction) => void,
   sendAttack: () => void,
 ) {
-  // Button handlers for UI components (D-pad, etc.)
   const handleMove = (dir: Direction) => {
     if (!isActive(gameState)) return;
     sendMove(dir);
@@ -44,7 +43,6 @@ export function useKeyboardControls(
     sendAttack();
   };
 
-  // Keyboard handler - use this with onKeyDown on a container div
   const handleKeyDown = (e: React.KeyboardEvent | KeyboardEvent) => {
     if (!isActive(gameState)) return;
     if (!isMappedKey(e.key)) return;

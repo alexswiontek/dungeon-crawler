@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useEffectEvent, useState } from 'react';
 import { cn } from '@/utils/cn';
 
 type ToastType = 'success' | 'danger' | 'info';
@@ -25,15 +25,20 @@ export function Toast({
   onRemove,
 }: ToastProps) {
   const [isVisible, setIsVisible] = useState(true);
+  const remove = useEffectEvent(() => onRemove(id));
 
   useEffect(() => {
-    const timer = setTimeout(() => {
+    let removeTimer: ReturnType<typeof setTimeout> | undefined;
+    const hideTimer = setTimeout(() => {
       setIsVisible(false);
-      setTimeout(() => onRemove(id), 300);
+      removeTimer = setTimeout(remove, 300);
     }, duration);
 
-    return () => clearTimeout(timer);
-  }, [duration, id, onRemove]);
+    return () => {
+      clearTimeout(hideTimer);
+      clearTimeout(removeTimer);
+    };
+  }, [duration]);
 
   return (
     <div

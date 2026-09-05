@@ -1,5 +1,3 @@
-// Renderer - demand-driven Canvas 2D rendering
-
 import {
   type Coordinate,
   isEquipmentItem,
@@ -21,18 +19,16 @@ import {
   TILE_SPRITES,
 } from '@/sprites';
 
-// Type guard to validate enemy types at runtime
 function isValidEnemyType(
   type: string,
 ): type is keyof typeof ENEMY_SPRITE_MAPPING {
   return type in ENEMY_SPRITE_MAPPING;
 }
 
-// Variant tints for enemies without unique sprites (same as Grid.tsx)
 const VARIANT_TINTS: Record<string, string | null> = {
   normal: null,
-  elite: 'sepia(1) saturate(3) hue-rotate(180deg)', // Blue tint
-  champion: 'sepia(1) saturate(5) hue-rotate(320deg) brightness(1.1)', // Red/purple
+  elite: 'sepia(1) saturate(3) hue-rotate(180deg)',
+  champion: 'sepia(1) saturate(5) hue-rotate(320deg) brightness(1.1)',
 };
 
 export interface RendererConfig {
@@ -82,18 +78,15 @@ export class Renderer {
   private firstFrame: FirstFrameDeferred | null = null;
   private renderingSnapshot: GameClientSnapshot | null = null;
 
-  // Viewport configuration
   private viewportTilesX = MAP_WIDTH;
   private viewportTilesY = MAP_HEIGHT;
   private tileScale = 1;
 
-  // Camera position (top-left tile coords)
   private cameraX = 0;
   private cameraY = 0;
 
   private damagedEntities = new Set<string>();
 
-  // Off-screen canvas for tinted sprites
   private tintCanvas: HTMLCanvasElement;
   private tintCtx: CanvasRenderingContext2D;
 
@@ -110,10 +103,8 @@ export class Renderer {
     this.assets = assets;
     this.model = model;
 
-    // Disable image smoothing for crisp pixel art
     this.ctx.imageSmoothingEnabled = false;
 
-    // Create off-screen canvas for tinted sprites
     this.tintCanvas = document.createElement('canvas');
     this.tintCanvas.width = TILE_SIZE;
     this.tintCanvas.height = TILE_SIZE;
@@ -124,9 +115,6 @@ export class Renderer {
     this.tintCtx = tintCtx;
   }
 
-  /**
-   * Update viewport configuration.
-   */
   setViewport(viewportTiles: Coordinate, tileScale: number): void {
     if (
       this.viewportTilesX === viewportTiles.x &&
@@ -141,9 +129,6 @@ export class Renderer {
     this.invalidate();
   }
 
-  /**
-   * Update damaged entities for flash effect.
-   */
   setDamagedEntities(entities: string[]): void {
     const nextEntities = new Set(entities);
     if (
@@ -156,9 +141,7 @@ export class Renderer {
     this.invalidate();
   }
 
-  /**
-   * Start rendering and resolve after the first completed frame.
-   */
+  /** Resolves after the first completed frame. */
   start(): Promise<void> {
     if (this.running && this.firstFrame) return this.firstFrame.promise;
 
@@ -171,9 +154,6 @@ export class Renderer {
     return this.firstFrame.promise;
   }
 
-  /**
-   * Stop rendering.
-   */
   stop(): void {
     if (!this.running && !this.unsubscribe && this.rafId === null) return;
 
@@ -245,10 +225,8 @@ export class Renderer {
   }
 
   private render(): void {
-    // Update camera to center on player
     this.updateCamera();
 
-    // Clear canvas
     this.ctx.fillStyle = '#1a1a2e';
     this.ctx.fillRect(
       0,
@@ -257,16 +235,9 @@ export class Renderer {
       this.viewportTilesY * TILE_SIZE,
     );
 
-    // Draw visible tiles (viewport culling)
     this.drawTiles();
-
-    // Draw items
     this.drawItems();
-
-    // Draw enemies
     this.drawEnemies();
-
-    // Draw player
     this.drawPlayer();
   }
 
@@ -307,18 +278,15 @@ export class Renderer {
         const screenX = (x - this.cameraX) * TILE_SIZE;
         const screenY = (y - this.cameraY) * TILE_SIZE;
 
-        // Explored terrain persists after it leaves current visibility.
         const inFog = !this.state.explored[y]?.[x];
         if (inFog) {
           this.drawSprite('tiles', TILE_SPRITES.fog, screenX, screenY);
           continue;
         }
 
-        // Get tile type
         const tile = this.state.map[y]?.[x];
         const tileType = tile?.type || 'floor';
 
-        // Get themed tile sprite
         const tilePosition = getTileSprite(tileType, x, y, this.state.floor);
         this.drawSprite('tiles', tilePosition, screenX, screenY);
       }
@@ -327,7 +295,6 @@ export class Renderer {
 
   private drawItems(): void {
     for (const item of this.state.items.values()) {
-      // Skip if not in viewport
       if (!this.isInViewport(item.x, item.y)) continue;
 
       if (!this.state.explored[item.y]?.[item.x]) continue;
@@ -345,15 +312,12 @@ export class Renderer {
 
   private drawEnemies(): void {
     for (const enemy of this.state.enemies.values()) {
-      // Skip if not in viewport
       if (!this.isInViewport(enemy.x, enemy.y)) continue;
 
       if (!this.state.visibleNow[enemy.y]?.[enemy.x]) continue;
 
-      // Skip dead enemies
       if (enemy.hp <= 0) continue;
 
-      // Validate enemy type with type guard
       if (!isValidEnemyType(enemy.type)) {
         console.warn(`Unknown enemy type: ${enemy.type}`);
         continue;
@@ -364,11 +328,9 @@ export class Renderer {
 
       const position = getEnemySprite(enemy.type, enemy.variant);
 
-      // Apply tint for enemies without unique variant sprites
       const needsTint = enemy.type === 'rat' || enemy.type === 'dragon';
       const tint = needsTint ? VARIANT_TINTS[enemy.variant || 'normal'] : null;
 
-      // Check if damaged for flash effect
       const isDamaged = this.damagedEntities.has(enemy.id);
 
       this.drawSprite(
@@ -386,7 +348,6 @@ export class Renderer {
   private drawPlayer(): void {
     if (!this.state.player) return;
 
-    // Skip if player not in viewport (shouldn't happen but just in case)
     if (!this.isInViewport(this.state.player.x, this.state.player.y)) return;
 
     const screenX = (this.state.player.x - this.cameraX) * TILE_SIZE;
@@ -395,10 +356,8 @@ export class Renderer {
     const characterSprite =
       CHARACTER_SPRITES[this.state.player.character] || CHARACTER_SPRITES.dwarf;
 
-    // Check if damaged for flash effect
     const isDamaged = this.damagedEntities.has('player');
 
-    // Flip sprite based on facing direction
     const flipX = this.state.player.facingDirection === 'right';
 
     this.drawSprite(
@@ -423,7 +382,6 @@ export class Renderer {
   ): void {
     const sheet = this.assets.getSheet(sheetKey);
 
-    // Apply tint if needed using off-screen canvas
     if (tint) {
       this.tintCtx.clearRect(0, 0, TILE_SIZE, TILE_SIZE);
       this.tintCtx.filter = tint;
@@ -449,7 +407,6 @@ export class Renderer {
         destY = 0;
       }
 
-      // Apply damage flash
       if (isDamaged) {
         this.ctx.filter = 'brightness(2) saturate(0.5)';
       }
@@ -468,7 +425,6 @@ export class Renderer {
       destY = 0;
     }
 
-    // Apply damage flash
     if (isDamaged) {
       this.ctx.filter = 'brightness(2) saturate(0.5)';
     }
@@ -497,9 +453,6 @@ export class Renderer {
     );
   }
 
-  /**
-   * Get current camera position (for positioning overlays).
-   */
   getCamera(): Coordinate {
     return { x: this.cameraX, y: this.cameraY };
   }

@@ -248,6 +248,105 @@ export const GameStateResponseSchema = z.strictObject({
   state: VisibleGameStateSchema,
 });
 
+export const GAME_WEBSOCKET_CLIENT_QUEUE_LIMIT = 8;
+export const GAME_WEBSOCKET_SERVER_QUEUE_LIMIT = 16;
+export const GAME_WEBSOCKET_BUFFERED_AMOUNT_LIMIT = 64 * 1024;
+export const GAME_WEBSOCKET_MESSAGE_SIZE_LIMIT = 8 * 1024;
+
+export const GameWebSocketCloseCode = {
+  AUTHENTICATION_TIMEOUT: 4000,
+  AUTHENTICATION_FAILED: 4001,
+  PROTOCOL_MISMATCH: 4002,
+  CONNECTION_REPLACED: 4003,
+  MALFORMED_MESSAGE: 4004,
+  MESSAGE_TOO_LARGE: 4005,
+  QUEUE_OVERFLOW: 4006,
+  IDLE_TIMEOUT: 4007,
+  SERVER_SHUTDOWN: 4008,
+  COMMAND_BEFORE_AUTHENTICATION: 4009,
+  REPEATED_AUTHENTICATION: 4010,
+} as const;
+
+export const GameWebSocketCloseReason = {
+  AUTHENTICATION_TIMEOUT: 'Authentication timed out',
+  AUTHENTICATION_FAILED: 'Authentication failed',
+  PROTOCOL_MISMATCH: 'Protocol version mismatch',
+  CONNECTION_REPLACED: 'Connection replaced',
+  MALFORMED_MESSAGE: 'Malformed message',
+  MESSAGE_TOO_LARGE: 'Message too large',
+  QUEUE_OVERFLOW: 'Command queue overflow',
+  IDLE_TIMEOUT: 'Connection idle',
+  SERVER_SHUTDOWN: 'Server restarting',
+  COMMAND_BEFORE_AUTHENTICATION: 'Authenticate before sending commands',
+  REPEATED_AUTHENTICATION: 'Already authenticated',
+} as const;
+
+export const GameWebSocketAuthenticationRequestSchema = z.strictObject({
+  type: z.literal('authenticate'),
+  protocolVersion: GameplayProtocolVersionSchema,
+  sessionToken: z.string().min(1).max(512),
+});
+
+export const GameWebSocketCommandRequestSchema = GameActionRequestSchema.extend(
+  {
+    type: z.literal('command'),
+  },
+);
+
+export const GameWebSocketClientMessageSchema = z.discriminatedUnion('type', [
+  GameWebSocketAuthenticationRequestSchema,
+  GameWebSocketCommandRequestSchema,
+]);
+
+export const GameWebSocketAuthenticatedSchema = z.strictObject({
+  type: z.literal('authenticated'),
+  protocolVersion: GameplayProtocolVersionSchema,
+  revision: z.number().int().nonnegative(),
+  state: VisibleGameStateSchema,
+});
+
+export const GameWebSocketCommandSuccessSchema = GameCommandResultSchema.extend(
+  {
+    type: z.literal('acknowledgment'),
+    serverQueueDepth: z.number().int().nonnegative().optional(),
+    serverPeakQueueDepth: z.number().int().nonnegative().optional(),
+  },
+);
+
+export const GameWebSocketErrorCodeSchema = z.union([
+  GameErrorCodeSchema,
+  z.enum(['TRANSPORT_OVERFLOW', 'MALFORMED_MESSAGE']),
+]);
+
+export const GameWebSocketCommandErrorSchema = z.strictObject({
+  type: z.literal('command_error'),
+  error: z.string(),
+  code: GameWebSocketErrorCodeSchema,
+  actionId: ActionIdSchema.optional(),
+  revision: z.number().int().nonnegative().optional(),
+  state: VisibleGameStateSchema.optional(),
+  retryAfterMs: z.number().int().nonnegative().optional(),
+});
+
+export const GameWebSocketProtocolMismatchSchema = z.strictObject({
+  type: z.literal('protocol_mismatch'),
+  protocolVersion: GameplayProtocolVersionSchema,
+  error: z.string(),
+});
+
+export const GameWebSocketReconnectSchema = z.strictObject({
+  type: z.literal('reconnect'),
+  reason: z.enum(['server_shutdown']),
+});
+
+export const GameWebSocketServerMessageSchema = z.discriminatedUnion('type', [
+  GameWebSocketAuthenticatedSchema,
+  GameWebSocketCommandSuccessSchema,
+  GameWebSocketCommandErrorSchema,
+  GameWebSocketProtocolMismatchSchema,
+  GameWebSocketReconnectSchema,
+]);
+
 export type NewGameRequest = z.infer<typeof NewGameRequestSchema>;
 export type GameCommandWire = z.infer<typeof GameCommandSchema>;
 export type ExecuteGameCommandRequest = z.infer<
@@ -262,3 +361,27 @@ export type GameErrorCode = z.infer<typeof GameErrorCodeSchema>;
 export type GameErrorResponse = z.infer<typeof GameErrorResponseSchema>;
 export type NewGameResponse = z.infer<typeof NewGameResponseSchema>;
 export type GameStateResponse = z.infer<typeof GameStateResponseSchema>;
+export type GameWebSocketAuthenticationRequest = z.infer<
+  typeof GameWebSocketAuthenticationRequestSchema
+>;
+export type GameWebSocketCommandRequest = z.infer<
+  typeof GameWebSocketCommandRequestSchema
+>;
+export type GameWebSocketClientMessage = z.infer<
+  typeof GameWebSocketClientMessageSchema
+>;
+export type GameWebSocketAuthenticated = z.infer<
+  typeof GameWebSocketAuthenticatedSchema
+>;
+export type GameWebSocketCommandSuccess = z.infer<
+  typeof GameWebSocketCommandSuccessSchema
+>;
+export type GameWebSocketCommandError = z.infer<
+  typeof GameWebSocketCommandErrorSchema
+>;
+export type GameWebSocketErrorCode = z.infer<
+  typeof GameWebSocketErrorCodeSchema
+>;
+export type GameWebSocketServerMessage = z.infer<
+  typeof GameWebSocketServerMessageSchema
+>;
