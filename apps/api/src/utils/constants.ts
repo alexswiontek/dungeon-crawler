@@ -2,6 +2,9 @@ export const MAX_PLAYER_NAME_LENGTH = 20;
 
 export const GAME_TTL_SECONDS = 7 * 24 * 60 * 60;
 
+// A warm game retains roughly 75 KB, so this bounds the cache near 37 MB.
+export const WARM_GAME_CACHE_LIMIT = 500;
+
 export const LEADERBOARD_DEFAULT_LIMIT = 10;
 export const LEADERBOARD_MAX_LIMIT = 100;
 

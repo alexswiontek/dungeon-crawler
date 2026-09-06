@@ -44,6 +44,7 @@ import type {
   StoredGameDocument,
 } from '@/types/database.js';
 import { GameServiceError } from '@/types/gameServiceErrors.js';
+import { WARM_GAME_CACHE_LIMIT } from '@/utils/constants.js';
 import { logger as defaultLogger } from '@/utils/logger.js';
 
 const ACTION_RECEIPT_LIMIT = 16;
@@ -82,6 +83,7 @@ export interface RedisGameCommandServiceDependencies {
   scheduleRetry: (callback: () => void, delayMs: number) => void;
   checkpointCommandInterval: number;
   checkpointTimeIntervalMs: number;
+  warmGameCacheLimit: number;
 }
 
 function positiveIntegerEnvironment(name: string, fallback: number): number {
@@ -116,6 +118,7 @@ const defaultDependencies: RedisGameCommandServiceDependencies = {
     'CHECKPOINT_TIME_INTERVAL_MS',
     DEFAULT_CHECKPOINT_TIME_INTERVAL_MS,
   ),
+  warmGameCacheLimit: WARM_GAME_CACHE_LIMIT,
 };
 
 function cloneDocument(document: StoredGameDocument): StoredGameDocument {
@@ -265,6 +268,18 @@ export function createRedisGameCommandService(
   const dependencies = { ...defaultDependencies, ...overrides };
   const cache = new Map<string, WarmGame>();
   const hydration = new Map<string, Promise<WarmGame>>();
+  // Eviction only costs a rehydration: hydrateUncached rebuilds any game from
+  // its MongoDB checkpoint plus the Redis journal.
+  function remember(gameId: string, warm: WarmGame): WarmGame {
+    cache.delete(gameId);
+    cache.set(gameId, warm);
+    while (cache.size > dependencies.warmGameCacheLimit) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+    return warm;
+  }
   const serialization = new Map<string, Promise<void>>();
   const pendingCheckpoints = new Map<string, PendingCheckpoint>();
   const checkpointTimers = new Map<string, NodeJS.Timeout>();
@@ -467,8 +482,7 @@ export function createRedisGameCommandService(
       recovered.actionReceipts,
       storedJournal.receipts,
     );
-    const warm = { document: recovered, checkpointRevision };
-    cache.set(gameId, warm);
+    const warm = remember(gameId, { document: recovered, checkpointRevision });
     dependencies.logger.info(
       {
         gameId,
@@ -484,7 +498,7 @@ export function createRedisGameCommandService(
 
   async function hydrate(gameId: string): Promise<WarmGame> {
     const cached = cache.get(gameId);
-    if (cached) return cached;
+    if (cached) return remember(gameId, cached);
     const existing = hydration.get(gameId);
     if (existing) return existing;
     const pending = hydrateUncached(gameId);
@@ -587,6 +601,15 @@ export function createRedisGameCommandService(
     );
     if (document.leaderboard.status === 'pending')
       void tryDeliverLeaderboard(document._id);
+    // A finished game accepts no further commands, so keeping it warm only
+    // grows the cache until the process restarts.
+    if (
+      warm &&
+      warm.document.game.status !== 'active' &&
+      warm.document.revision <= document.revision
+    ) {
+      cache.delete(document._id);
+    }
   }
 
   function scheduleCheckpointRetry(): void {
@@ -702,7 +725,7 @@ export function createRedisGameCommandService(
       logRedisError(error, { gameId }, 'Game journal initialization failed');
       throw serviceUnavailable();
     }
-    cache.set(gameId, {
+    remember(gameId, {
       document: cloneDocument(document),
       checkpointRevision: 0,
     });
@@ -790,7 +813,7 @@ export function createRedisGameCommandService(
       );
       throw serviceUnavailable();
     }
-    cache.set(gameId, {
+    remember(gameId, {
       document: cloneDocument(document),
       checkpointRevision: 0,
     });
@@ -1006,7 +1029,7 @@ export function createRedisGameCommandService(
         return retried;
       }
 
-      cache.set(request.gameId, {
+      remember(request.gameId, {
         document: nextDocument,
         checkpointRevision: warm.checkpointRevision,
       });

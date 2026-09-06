@@ -22,9 +22,9 @@ min_machines_running = 1
   type = "connections"
 
   # Liveness alone would keep routing traffic to a machine that has lost MongoDB
-  # or Redis.
-  [[http_service.http_checks]]
-  grace_period = "20s"
+  # or Redis. Confirm with `fly config show`: validate ignores unknown keys.
+  [[http_service.checks]]
+  grace_period = "40s"
   interval = "15s"
   method = "GET"
   path = "/health/dependencies"

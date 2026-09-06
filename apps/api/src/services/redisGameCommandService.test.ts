@@ -1,5 +1,5 @@
 import type { Db } from 'mongodb';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { type GameJournal, MemoryGameJournal } from '@/services/gameJournal.js';
 import type {
   LeaderboardDoc,
@@ -13,6 +13,7 @@ class FakeDatabase {
   readonly legacyGames = new Map<string, LegacyGameDocument>();
   readonly leaderboard = new Map<string, LeaderboardDoc>();
   readonly checkpointRevisions: number[] = [];
+  readonly gameReads: string[] = [];
   checkpointGate: Promise<void> | null = null;
 
   collection<_T>(name: string) {
@@ -28,6 +29,7 @@ class FakeDatabase {
         if (filter.sessionTokenHash && filter.game) {
           return structuredClone(this.legacyGames.get(filter._id) ?? null);
         }
+        this.gameReads.push(filter._id);
         return structuredClone(this.games.get(filter._id) ?? null);
       },
       insertOne: async (document: StoredGameDocument) => {
@@ -86,18 +88,49 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+interface HydrationLog {
+  gameId: string;
+  hydrationDurationMs: number;
+}
+
+function isHydrationLog(fields: object): fields is HydrationLog {
+  return (
+    'gameId' in fields &&
+    typeof fields.gameId === 'string' &&
+    'hydrationDurationMs' in fields &&
+    typeof fields.hydrationDurationMs === 'number'
+  );
+}
+
 describe('Redis-backed game command service', () => {
   let database: FakeDatabase;
   let journal: MemoryGameJournal;
+  let logger: {
+    info: Mock<(fields: object, message?: string) => void>;
+    warn: Mock<(fields: object, message?: string) => void>;
+    error: Mock<(fields: object, message?: string) => void>;
+  };
   let id = 0;
 
   beforeEach(() => {
     database = new FakeDatabase();
     journal = new MemoryGameJournal();
+    logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     id = 0;
   });
 
-  function service(gameJournal: GameJournal = journal) {
+  function hydrationsOf(gameId: string): number {
+    return logger.info.mock.calls.filter(
+      ([fields]) => isHydrationLog(fields) && fields.gameId === gameId,
+    ).length;
+  }
+
+  function service(
+    gameJournal: GameJournal = journal,
+    overrides: Partial<
+      Parameters<typeof createRedisGameCommandService>[0]
+    > = {},
+  ) {
     return createRedisGameCommandService({
       getDatabase: () => database as unknown as Db,
       getJournal: () => gameJournal,
@@ -109,9 +142,10 @@ describe('Redis-backed game command service', () => {
       createId: () => `id-${++id}`,
       createToken: () => 'test-session-token',
       createSeed: () => 'test-seed',
-      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logger,
       scheduleRetry: vi.fn(),
       checkpointCommandInterval: 1,
+      ...overrides,
     });
   }
 
@@ -355,5 +389,61 @@ describe('Redis-backed game command service', () => {
     ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
     gate.resolve();
     await firstService.flushCheckpoints();
+  });
+
+  it('drops a finished game from the warm cache after its checkpoint', async () => {
+    const finishing = service(journal, {
+      applyTransition: (state) => {
+        state.status = 'won';
+        return { state, events: [], accepted: true };
+      },
+    });
+    const { created } = await create(finishing);
+
+    await finishing.executeGameCommand({
+      gameId: created.gameId,
+      sessionToken: created.sessionToken,
+      actionId: 'action-1',
+      expectedRevision: 0,
+      command: { type: 'descend' },
+    });
+    await finishing.flushCheckpoints();
+    await finishing.readGame(created.gameId, created.sessionToken);
+
+    expect(hydrationsOf(created.gameId)).toBe(1);
+  });
+
+  it('keeps an unfinished game warm after its checkpoint', async () => {
+    const { commandService, created } = await create();
+
+    await commandService.executeGameCommand({
+      gameId: created.gameId,
+      sessionToken: created.sessionToken,
+      actionId: 'action-1',
+      expectedRevision: 0,
+      command: { type: 'attack' },
+    });
+    await commandService.flushCheckpoints();
+    await commandService.readGame(created.gameId, created.sessionToken);
+
+    expect(hydrationsOf(created.gameId)).toBe(0);
+  });
+
+  it('evicts the least recently used game once the cache limit is passed', async () => {
+    const bounded = service(journal, { warmGameCacheLimit: 2 });
+    const first = await create(bounded);
+    const second = await create(bounded);
+
+    // Touching the first leaves the second as the least recently used entry.
+    await bounded.readGame(first.created.gameId, first.created.sessionToken);
+    const third = await create(bounded);
+
+    await bounded.readGame(first.created.gameId, first.created.sessionToken);
+    await bounded.readGame(third.created.gameId, third.created.sessionToken);
+    await bounded.readGame(second.created.gameId, second.created.sessionToken);
+
+    expect(hydrationsOf(first.created.gameId)).toBe(0);
+    expect(hydrationsOf(third.created.gameId)).toBe(0);
+    expect(hydrationsOf(second.created.gameId)).toBe(1);
   });
 });
