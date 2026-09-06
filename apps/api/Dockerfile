@@ -24,7 +24,8 @@ RUN pnpm --filter @dungeon-crawler/api build
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apk add --no-cache wget
+# redis is only started when EMBEDDED_REDIS=true, which is how the Fly app runs.
+RUN apk add --no-cache wget redis
 
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/pnpm-workspace.yaml ./
@@ -39,5 +40,11 @@ COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=deps /app/packages/domain/node_modules ./packages/domain/node_modules
 COPY --from=deps /app/packages/protocol/node_modules ./packages/protocol/node_modules
 
+COPY apps/api/start-api.sh /usr/local/bin/start-api
+RUN chmod +x /usr/local/bin/start-api
+
+# The Fly volume mounts over this. It has to exist for redis-server to start without one.
+RUN mkdir -p /data
+
 EXPOSE 3000
-CMD ["node", "apps/api/dist/index.js"]
+CMD ["start-api"]
