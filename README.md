@@ -187,9 +187,9 @@ The Compose stack runs MongoDB and Redis as separate services. The API port stay
 
 ## Persistence limits
 
-MongoDB is the long-term checkpoint store. Redis holds newer accepted commands so the API can rebuild current state after a restart. Neither Fly configuration provisions MongoDB, so its durability is whatever your MongoDB provider gives you.
+MongoDB is the long-term checkpoint store. Redis holds newer accepted commands so the API can rebuild current state after a restart. Nothing in this repository provisions MongoDB, so its durability is whatever your MongoDB provider gives you.
 
-The Fly.io Redis configuration uses one machine, one volume, and AOF persistence with `appendfsync everysec`. A sudden Redis host failure can lose about one second of acknowledged commands. Losing the Redis volume restores each game only to its latest confirmed MongoDB checkpoint.
+On Fly.io, Redis runs beside Node on the API machine, bound to loopback, with AOF persistence at `appendfsync everysec` on the `redis_data` volume. A sudden host failure can lose about one second of acknowledged commands, and an API deploy restarts the journal with it. Losing the volume restores each game only to its latest confirmed MongoDB checkpoint.
 
 `GAME_REDUCER_VERSION` in `apps/api/src/services/gameJournal.ts` guards replay. Journal entries written by a different reducer version are discarded, and those games restore from their latest MongoDB checkpoint instead. Bump it whenever a change to the game rules would make an old command replay to a different state.
 
@@ -201,50 +201,38 @@ The migration applies only to active legacy documents without the authenticated 
 
 ## Deployment
 
-Three pieces deploy independently: the API and Redis as Fly.io apps, and the UI as a static bundle on Vercel. MongoDB is not deployed by anything in this repository.
+Two pieces deploy independently: the API as a Fly.io app, and the UI as a static bundle on Vercel. MongoDB is not deployed by anything in this repository.
 
-Fly app names are globally unique. The checked-in configuration uses `dungeon-crawler-api` and `dungeon-crawler-redis` in `lax`; if either name is taken, change `app` in `fly.toml` or `fly.redis.toml` and use your name throughout.
-
-Steps 2 and 3 share a shell variable, so run them in the same session. Keep the generated password and the assembled connection URL out of chat, source files, and command output.
+Fly app names are globally unique. The checked-in configuration uses `dungeon-crawler-api` in `lax`; if that name is taken, change `app` in `fly.toml` and use your name throughout. Keep the MongoDB connection string out of chat, source files, and command output.
 
 ### 1. MongoDB
 
-Provision a MongoDB deployment your Fly app can reach and keep its connection string for step 3. The API validates `MONGODB_URI` at startup and exits if the database is unavailable, so this has to exist first.
+Provision a MongoDB deployment your Fly app can reach and keep its connection string for step 2. MongoDB Atlas is the usual choice, and any provider reachable over the public internet works. The API validates `MONGODB_URI` at startup and exits if the database is unavailable, so this has to exist first.
 
-### 2. Redis
+Atlas rejects connections from addresses outside its access list, and Fly machines have no stable outbound address unless you buy a dedicated one. Either allocate a dedicated egress IP for the app and list it, or allow `0.0.0.0/0` and rely on the database user's credentials.
 
-Redis is its own Fly app so the command journal outlives an API deploy. It gets one machine, one 1 GB volume, and no public service.
+### 2. The API
 
-```bash
-export REDIS_APP=dungeon-crawler-redis
-export REDIS_PASSWORD="$(openssl rand -hex 32)"
-fly apps create "$REDIS_APP"
-fly volumes create redis_data --app "$REDIS_APP" --region lax --size 1 --yes
-fly secrets set REDIS_PASSWORD="$REDIS_PASSWORD" --app "$REDIS_APP"
-fly deploy --config fly.redis.toml --app "$REDIS_APP"
-```
-
-### 3. The API
-
-Create the app, set its three secrets, then deploy. `ALLOWED_ORIGINS` must exactly match the browser origin serving the UI, with no path or trailing slash, or gameplay requests and WebSocket upgrades are rejected.
+Create the app and the journal volume, set the two secrets, then deploy. `ALLOWED_ORIGINS` must exactly match the browser origin serving the UI, with no path or trailing slash, or gameplay requests and WebSocket upgrades are rejected.
 
 ```bash
 export API_APP=dungeon-crawler-api
 fly apps create "$API_APP"
+fly volumes create redis_data --app "$API_APP" --region lax --size 1 --yes
 fly secrets set \
   MONGODB_URI="<connection string from step 1>" \
   ALLOWED_ORIGINS="https://<your-ui-origin>" \
-  REDIS_URL="redis://default:${REDIS_PASSWORD}@${REDIS_APP}.internal:6379" \
   --app "$API_APP"
-unset REDIS_PASSWORD
 fly deploy --config fly.toml --app "$API_APP"
 fly status --app "$API_APP"
 curl --fail "https://${API_APP}.fly.dev/health/dependencies"
 ```
 
+The volume name has to stay `redis_data` to match the mount in `fly.toml`, and it must be in the machine's region. `REDIS_URL` comes from `[env]` in `fly.toml`; a secret of the same name would silently win over it.
+
 The health response reports MongoDB and Redis separately, so a failure here identifies which dependency is unreachable. Fly also runs this route as the machine's health check, so a machine that loses either dependency stops receiving traffic.
 
-### 4. The UI
+### 3. The UI
 
 ```bash
 VITE_API_URL=https://dungeon-crawler-api.fly.dev pnpm build:ui

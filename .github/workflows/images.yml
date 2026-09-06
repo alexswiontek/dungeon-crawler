@@ -1,0 +1,96 @@
+name: Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.dockerignore'
+      - '.github/workflows/images.yml'
+      - 'apps/api/Dockerfile'
+      - 'apps/api/start-api.sh'
+      - 'apps/ui/Dockerfile'
+      - 'apps/ui/nginx.conf'
+      - 'fly.toml'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '**/package.json'
+  pull_request:
+    paths:
+      - '.dockerignore'
+      - '.github/workflows/images.yml'
+      - 'apps/api/Dockerfile'
+      - 'apps/api/start-api.sh'
+      - 'apps/ui/Dockerfile'
+      - 'apps/ui/nginx.conf'
+      - 'fly.toml'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '**/package.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  images:
+    name: Build and smoke the container images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check fly.toml parses
+        run: python3 -c "import tomllib; tomllib.load(open('fly.toml','rb'))"
+
+      - name: Build the API image
+        run: docker build --file apps/api/Dockerfile --tag dungeon-crawler-api:ci .
+
+      - name: Build the UI image
+        run: docker build --file apps/ui/Dockerfile --tag dungeon-crawler-ui:ci .
+
+      - name: Start the API with its embedded Redis
+        run: |
+          docker run --detach --name api-smoke --network host \
+            --env MONGODB_URI=mongodb://127.0.0.1:27017/dungeon-crawler \
+            --env ALLOWED_ORIGINS=http://localhost:5173 \
+            --env EMBEDDED_REDIS=true \
+            dungeon-crawler-api:ci
+
+      - name: Wait for both dependencies to report connected
+        run: |
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/health/dependencies; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "the API never reported healthy" >&2
+          docker logs api-smoke
+          exit 1
+
+      - name: Shut it down the way Fly does
+        run: |
+          docker stop --timeout 30 api-smoke
+          code=$(docker inspect --format '{{.State.ExitCode}}' api-smoke)
+          if [ "$code" != "0" ]; then
+            echo "SIGTERM produced exit code $code" >&2
+            docker logs api-smoke
+            exit 1
+          fi

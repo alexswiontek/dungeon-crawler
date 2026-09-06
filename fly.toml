@@ -1,5 +1,3 @@
-# Gameplay API. Redis is a separate app (fly.redis.toml) so the command journal
-# outlives an API deploy.
 app = "dungeon-crawler-api"
 primary_region = "lax"
 
@@ -8,6 +6,8 @@ dockerfile = "apps/api/Dockerfile"
 
 [env]
 PORT = "3000"
+EMBEDDED_REDIS = "true"
+REDIS_URL = "redis://127.0.0.1:6379"
 
 [http_service]
 auto_start_machines = true
@@ -21,14 +21,17 @@ min_machines_running = 1
   soft_limit = 800
   type = "connections"
 
-  # Liveness alone would keep routing traffic to a machine that has lost MongoDB
-  # or Redis. Confirm with `fly config show`: validate ignores unknown keys.
+  # flyctl drops unknown keys, so only `fly config show` proves an edit here landed.
   [[http_service.checks]]
   grace_period = "40s"
   interval = "15s"
   method = "GET"
   path = "/health/dependencies"
   timeout = "5s"
+
+[[mounts]]
+source = "redis_data"
+destination = "/data"
 
 [[vm]]
 cpus = 1
