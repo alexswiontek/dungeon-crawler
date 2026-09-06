@@ -1,18 +1,18 @@
-import type { CharacterType } from '@dungeon-crawler/domain';
 import { performance } from 'node:perf_hooks';
+import type { CharacterType } from '@dungeon-crawler/domain/model';
 import {
-  GAMEPLAY_PROTOCOL_HEADER,
-  GAMEPLAY_PROTOCOL_VERSION,
   type GameActionRequest,
   GameActionRequestSchema,
   GameCommandResultSchema,
   type GameErrorResponse,
   GameErrorResponseSchema,
+  GAMEPLAY_PROTOCOL_HEADER,
+  GAMEPLAY_PROTOCOL_VERSION,
   GameStateResponseSchema,
   type NewGameRequest,
   NewGameRequestSchema,
   NewGameResponseSchema,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import {
   englishDataset,

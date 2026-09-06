@@ -1,9 +1,9 @@
-import type { GameCommandResult } from '@dungeon-crawler/protocol';
 import {
   GAME_WEBSOCKET_BUFFERED_AMOUNT_LIMIT,
+  type GameCommandResult,
   GAMEPLAY_PROTOCOL_VERSION,
   GameWebSocketCloseCode,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CommandQueueOverflowError, GameGateway } from '@/game/GameGateway';
 import type { GameTransport } from '@/game/GameHttpClient';

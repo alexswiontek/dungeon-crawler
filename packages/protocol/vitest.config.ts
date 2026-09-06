@@ -6,7 +6,7 @@ export default defineConfig({
     alias: {
       '@dungeon-crawler/domain': path.resolve(
         import.meta.dirname,
-        '../domain/src/index.ts',
+        '../domain/src',
       ),
     },
   },

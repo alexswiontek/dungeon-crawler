@@ -1,9 +1,0 @@
-{
-  "extends": ["./tsconfig.json", "../../tsconfig.workspace-source.json"],
-  "compilerOptions": {
-    "declaration": false,
-    "declarationMap": false,
-    "noEmit": true,
-    "rootDir": "../.."
-  }
-}

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { GAMEPLAY_PROTOCOL_VERSION } from '@dungeon-crawler/protocol';
+import { GAMEPLAY_PROTOCOL_VERSION } from '@dungeon-crawler/protocol/schemas';
 import { createClient, type RedisClientType } from 'redis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {

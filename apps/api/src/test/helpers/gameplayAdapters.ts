@@ -1,26 +1,34 @@
 import { randomUUID } from 'node:crypto';
 import {
-  attackAtRange,
-  type CharacterType,
-  createSeededRandom,
   createVisibilityMask,
-  type Direction,
-  descendFloor,
-  type Enemy,
-  type GameCommandContext,
-  type GameEvent,
-  type GameState,
   generateDungeon,
-  type Item,
+} from '@dungeon-crawler/domain/dungeon-generation';
+import type {
+  CharacterType,
+  Direction,
+  Enemy,
+  GameEvent,
+  GameState,
+  Item,
+  Tile,
+} from '@dungeon-crawler/domain/model';
+import {
+  createSeededRandom,
+  type GameCommandContext,
+} from '@dungeon-crawler/domain/random';
+import {
+  attackAtRange,
+  descendFloor,
   movePlayer,
-  type Tile,
-} from '@dungeon-crawler/domain';
+} from '@dungeon-crawler/domain/transition';
 import {
   diffClientProjections,
-  type GameDelta,
   projectGameState,
-  type VisibleGameState,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/client-projection';
+import type {
+  GameDelta,
+  VisibleGameState,
+} from '@dungeon-crawler/protocol/schemas';
 
 function context(): GameCommandContext {
   return {

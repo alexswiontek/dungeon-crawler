@@ -1,4 +1,4 @@
-import type { CharacterType } from '@dungeon-crawler/domain';
+import type { CharacterType } from '@dungeon-crawler/domain/model';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DeathScreen } from '@/components/DeathScreen';
 import { Game } from '@/components/Game';

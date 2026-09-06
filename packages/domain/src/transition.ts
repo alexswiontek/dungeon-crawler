@@ -24,6 +24,7 @@ import {
 import type { GameCommandContext } from './random.js';
 import {
   ENEMY_SCORES,
+  FINAL_FLOOR,
   FLEE_HP_THRESHOLD,
   FLOOR_DESCEND_SCORE_BONUS,
   getAttackType,
@@ -33,7 +34,6 @@ import {
   LEVEL_UP_DEFENSE_GAIN,
   LEVEL_UP_HEAL_PERCENTAGE,
   LEVEL_UP_HP_GAIN,
-  MAX_FLOOR,
   MAX_PATHFINDING_ENEMIES,
   VICTORY_SCORE_BONUS,
 } from './rules.js';
@@ -259,7 +259,34 @@ export function descendFloor(
     return { state, events: [], accepted: false };
   }
 
+  state.score += FLOOR_DESCEND_SCORE_BONUS;
+  state.updatedAt = context.clock.now();
+
+  if (state.floor >= FINAL_FLOOR) {
+    state.status = 'won';
+    state.score += VICTORY_SCORE_BONUS;
+    recalculateVisibility(state);
+    return {
+      state,
+      events: [
+        createEvent(context, {
+          type: 'game_won',
+          message: 'You escaped the dungeon! You win!',
+        }),
+      ],
+      accepted: true,
+    };
+  }
+
   state.floor += 1;
+  const events: GameEvent[] = [
+    createEvent(context, {
+      type: 'floor_descended',
+      message: `Descended to floor ${state.floor}!`,
+      data: { floor: state.floor },
+    }),
+  ];
+
   const dungeon = generateDungeon(
     state.floor,
     state.player.character,
@@ -272,27 +299,8 @@ export function descendFloor(
   state.items = dungeon.items;
   state.explored = createVisibilityMask();
   state.visibleNow = createVisibilityMask();
-  state.score += FLOOR_DESCEND_SCORE_BONUS;
-  state.updatedAt = context.clock.now();
   recalculateVisibility(state);
 
-  const events: GameEvent[] = [
-    createEvent(context, {
-      type: 'floor_descended',
-      message: `Descended to floor ${state.floor}!`,
-      data: { floor: state.floor },
-    }),
-  ];
-  if (state.floor >= MAX_FLOOR) {
-    state.status = 'won';
-    state.score += VICTORY_SCORE_BONUS;
-    events.push(
-      createEvent(context, {
-        type: 'game_won',
-        message: 'You escaped the dungeon! You win!',
-      }),
-    );
-  }
   return { state, events, accepted: true };
 }
 

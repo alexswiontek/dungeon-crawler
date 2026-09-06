@@ -1,5 +1,6 @@
-import type { GameCommand, SeededRandomState } from '@dungeon-crawler/domain';
-import { GAMEPLAY_PROTOCOL_VERSION } from '@dungeon-crawler/protocol';
+import type { GameCommand } from '@dungeon-crawler/domain/model';
+import type { SeededRandomState } from '@dungeon-crawler/domain/random';
+import { GAMEPLAY_PROTOCOL_VERSION } from '@dungeon-crawler/protocol/schemas';
 import type { RedisClientType } from 'redis';
 import type {
   GameActionReceipt,
@@ -7,7 +8,7 @@ import type {
 } from '@/types/database.js';
 import { GAME_TTL_SECONDS } from '@/utils/constants.js';
 
-export const GAME_REDUCER_VERSION = '1';
+export const GAME_REDUCER_VERSION = '2';
 
 export interface GameJournalEntry {
   schemaVersion: 1;

@@ -1,4 +1,7 @@
-import { type GameEvent, isRangedAttackEvent } from '@dungeon-crawler/shared';
+import {
+  type GameEvent,
+  isRangedAttackEvent,
+} from '@dungeon-crawler/domain/model';
 import { useEffect, useRef, useState } from 'react';
 import type { ProjectileEvent } from '@/components/Projectile';
 

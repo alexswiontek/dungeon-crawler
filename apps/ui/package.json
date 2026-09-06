@@ -15,7 +15,6 @@
   "dependencies": {
     "@dungeon-crawler/domain": "workspace:*",
     "@dungeon-crawler/protocol": "workspace:*",
-    "@dungeon-crawler/shared": "workspace:*",
     "clsx": "^2.1.1",
     "immer": "^11.1.18",
     "react": "^19.2.8",

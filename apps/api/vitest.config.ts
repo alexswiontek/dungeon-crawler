@@ -21,15 +21,11 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
       '@dungeon-crawler/domain': path.resolve(
         import.meta.dirname,
-        '../../packages/domain/src/index.ts',
+        '../../packages/domain/src',
       ),
       '@dungeon-crawler/protocol': path.resolve(
         import.meta.dirname,
-        '../../packages/protocol/src/index.ts',
-      ),
-      '@dungeon-crawler/shared': path.resolve(
-        import.meta.dirname,
-        '../../packages/shared/src/index.ts',
+        '../../packages/protocol/src',
       ),
     },
   },

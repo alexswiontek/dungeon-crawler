@@ -1,4 +1,4 @@
-import type { GameCommandResult } from '@dungeon-crawler/protocol';
+import type { GameCommandResult } from '@dungeon-crawler/protocol/schemas';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CommandQueueOverflowError,

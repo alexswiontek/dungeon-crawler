@@ -1,6 +1,12 @@
-import type { Enemy, GameStatus, Item, Tile } from '@dungeon-crawler/domain';
-import { MAP_HEIGHT, MAP_WIDTH } from '@dungeon-crawler/domain';
-import type { VisibleGameState } from '@dungeon-crawler/protocol';
+import {
+  type Enemy,
+  type GameStatus,
+  type Item,
+  MAP_HEIGHT,
+  MAP_WIDTH,
+  type Tile,
+} from '@dungeon-crawler/domain/model';
+import type { VisibleGameState } from '@dungeon-crawler/protocol/schemas';
 
 export interface GameClientSnapshot {
   readonly id: string;

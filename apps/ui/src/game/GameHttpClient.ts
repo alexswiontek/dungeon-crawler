@@ -1,16 +1,16 @@
-import type { CharacterType } from '@dungeon-crawler/domain';
+import type { CharacterType } from '@dungeon-crawler/domain/model';
 import {
-  GAMEPLAY_PROTOCOL_HEADER,
-  GAMEPLAY_PROTOCOL_VERSION,
   type GameCommandResult,
   GameCommandResultSchema,
   type GameErrorResponse,
   GameErrorResponseSchema,
+  GAMEPLAY_PROTOCOL_HEADER,
+  GAMEPLAY_PROTOCOL_VERSION,
   type GameStateResponse,
   GameStateResponseSchema,
   type NewGameResponse,
   NewGameResponseSchema,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 import {
   API_BASE_URL,
   gameWebSocketUrl,

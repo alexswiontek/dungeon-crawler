@@ -1,17 +1,14 @@
 import {
-  createVisibilityMask,
-  type GameEvent,
-  type GameState,
-} from '@dungeon-crawler/domain';
-import { describe, expect, it } from 'vitest';
-import {
   diffClientProjections,
+  projectGameState,
+} from './client-projection.js';
+import {
   ExecuteGameCommandRequestSchema,
-  GAMEPLAY_PROTOCOL_HEADER,
-  GAMEPLAY_PROTOCOL_VERSION,
   GameActionRequestSchema,
   GameCommandResultSchema,
   GameErrorResponseSchema,
+  GAMEPLAY_PROTOCOL_HEADER,
+  GAMEPLAY_PROTOCOL_VERSION,
   GameplayProtocolVersionSchema,
   GameStateResponseSchema,
   GameWebSocketAuthenticationRequestSchema,
@@ -21,8 +18,10 @@ import {
   GameWebSocketCommandRequestSchema,
   GameWebSocketServerMessageSchema,
   NewGameResponseSchema,
-  projectGameState,
-} from './index.js';
+} from './schemas.js';
+import { createVisibilityMask } from '@dungeon-crawler/domain/dungeon-generation';
+import type { GameEvent, GameState } from '@dungeon-crawler/domain/model';
+import { describe, expect, it } from 'vitest';
 
 function stateFixture(): GameState {
   const map = Array.from({ length: 8 }, (_, y) =>

@@ -2,7 +2,7 @@ import {
   CHARACTER_STATS,
   type CharacterType,
   type Equipment,
-} from '@dungeon-crawler/shared';
+} from '@dungeon-crawler/domain/model';
 import { describe, expect, it } from 'vitest';
 import {
   descendStairs,
@@ -76,7 +76,7 @@ describe('gameplay characterization', () => {
         ]),
       );
 
-      state.floor = 19;
+      state.floor = 20;
       state.map[state.player.y][state.player.x].type = 'stairs';
       const finishEvents = descendStairs(state);
 

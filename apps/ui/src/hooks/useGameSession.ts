@@ -2,7 +2,7 @@ import type {
   Direction,
   GameCommand,
   GameEvent,
-} from '@dungeon-crawler/domain';
+} from '@dungeon-crawler/domain/model';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { GameGateway } from '@/game/GameGateway';
 import {

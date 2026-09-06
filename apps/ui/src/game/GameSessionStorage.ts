@@ -1,5 +1,5 @@
-import type { CharacterType } from '@dungeon-crawler/domain';
-import { GAMEPLAY_PROTOCOL_VERSION } from '@dungeon-crawler/protocol';
+import type { CharacterType } from '@dungeon-crawler/domain/model';
+import { GAMEPLAY_PROTOCOL_VERSION } from '@dungeon-crawler/protocol/schemas';
 import { z } from 'zod';
 import type { GameSessionCredential } from '@/game/GameHttpClient';
 

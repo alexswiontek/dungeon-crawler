@@ -1,4 +1,4 @@
-import type { GameEvent } from '@dungeon-crawler/domain';
+import type { GameEvent } from '@dungeon-crawler/domain/model';
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToastContainer } from '@/components/ToastContainer';

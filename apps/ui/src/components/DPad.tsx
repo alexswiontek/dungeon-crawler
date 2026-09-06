@@ -1,4 +1,4 @@
-import type { Direction } from '@dungeon-crawler/shared';
+import type { Direction } from '@dungeon-crawler/domain/model';
 import type { ProjectileConfig } from '@/sprites';
 import { SPRITE_SHEETS, TILE_SIZE } from '@/sprites';
 import { cn } from '@/utils/cn';

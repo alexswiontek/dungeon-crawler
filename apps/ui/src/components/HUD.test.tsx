@@ -1,7 +1,5 @@
-import {
-  type CharacterType,
-  calculateRangedAttackPower,
-} from '@dungeon-crawler/domain';
+import { calculateRangedAttackPower } from '@dungeon-crawler/domain/combat';
+import type { CharacterType } from '@dungeon-crawler/domain/model';
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { HUD } from '@/components/HUD';

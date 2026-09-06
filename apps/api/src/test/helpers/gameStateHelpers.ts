@@ -1,26 +1,24 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  AIBehavior,
-  CharacterType,
-  Enemy,
-  EnemyType,
-  EnemyVariant,
-  Equipment,
-  EquipmentSlot,
-  GameState,
-  Player,
-  Tile,
-} from '@dungeon-crawler/shared';
+import { createVisibilityMask } from '@dungeon-crawler/domain/dungeon-generation';
 import {
+  type AIBehavior,
   CHARACTER_STATS,
-  createVisibilityMask,
+  type CharacterType,
+  type Enemy,
   ENEMY_STATS,
+  type EnemyType,
+  type EnemyVariant,
+  type Equipment,
   EQUIPMENT_DEFINITIONS,
+  type EquipmentSlot,
+  type GameState,
   getXpToNextLevel,
   MAP_HEIGHT,
   MAP_WIDTH,
+  type Player,
+  type Tile,
   VARIANT_MULTIPLIERS,
-} from '@dungeon-crawler/shared';
+} from '@dungeon-crawler/domain/model';
 
 /**
  * Create a test game state with sensible defaults and optional overrides

@@ -8,7 +8,6 @@ COPY apps/api/package.json ./apps/api/
 COPY apps/ui/package.json ./apps/ui/
 COPY packages/domain/package.json ./packages/domain/
 COPY packages/protocol/package.json ./packages/protocol/
-COPY packages/shared/package.json ./packages/shared/
 RUN pnpm install --frozen-lockfile
 
 FROM base AS builder
@@ -17,11 +16,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/ui/node_modules ./apps/ui/node_modules
 COPY --from=deps /app/packages/domain/node_modules ./packages/domain/node_modules
 COPY --from=deps /app/packages/protocol/node_modules ./packages/protocol/node_modules
-COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
 COPY . .
 RUN pnpm --filter @dungeon-crawler/domain build
 RUN pnpm --filter @dungeon-crawler/protocol build
-RUN pnpm --filter @dungeon-crawler/shared build
 RUN pnpm --filter @dungeon-crawler/ui build
 
 FROM nginx:alpine AS runner

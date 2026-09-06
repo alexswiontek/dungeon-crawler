@@ -1,12 +1,12 @@
+import { projectGameState } from '@dungeon-crawler/protocol/client-projection';
 import {
-  GAMEPLAY_PROTOCOL_HEADER,
-  GAMEPLAY_PROTOCOL_VERSION,
   GameCommandResultSchema,
   GameErrorResponseSchema,
+  GAMEPLAY_PROTOCOL_HEADER,
+  GAMEPLAY_PROTOCOL_VERSION,
   GameStateResponseSchema,
   NewGameResponseSchema,
-  projectGameState,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {

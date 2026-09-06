@@ -12,7 +12,7 @@ import {
   GameWebSocketCommandSuccessSchema,
   GameWebSocketProtocolMismatchSchema,
   GameWebSocketReconnectSchema,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { RawData, WebSocket } from 'ws';
 import { executeGameCommand, readGame } from '@/services/gameCommandService.js';

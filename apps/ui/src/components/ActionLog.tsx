@@ -1,4 +1,4 @@
-import type { GameEvent } from '@dungeon-crawler/shared';
+import type { GameEvent } from '@dungeon-crawler/domain/model';
 
 interface ActionLogProps {
   events: GameEvent[];
