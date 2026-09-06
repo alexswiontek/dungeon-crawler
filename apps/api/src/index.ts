@@ -35,6 +35,10 @@ import {
   isRedisHealthy,
 } from '@/services/redis.js';
 import {
+  createOriginMatcher,
+  parseAllowedOrigins,
+} from '@/utils/allowedOrigins.js';
+import {
   RATE_LIMIT_MAX_REQUESTS,
   RATE_LIMIT_TIME_WINDOW,
 } from '@/utils/constants.js';
@@ -47,11 +51,8 @@ if (Number.isNaN(PORT) || PORT < 1 || PORT > 65535) {
   process.exit(1);
 }
 
-const ALLOWED_ORIGINS = (
-  process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173']
-)
-  .map((origin) => origin.trim())
-  .filter((origin) => origin.length > 0);
+const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
+const isAllowedOrigin = createOriginMatcher(ALLOWED_ORIGINS);
 
 const fastify = Fastify({
   trustProxy: true,
@@ -104,7 +105,7 @@ await fastify.register(cors, {
 
         if (
           (allowNullOrigin && !origin) ||
-          (origin && ALLOWED_ORIGINS.includes(origin))
+          (origin && isAllowedOrigin(origin))
         ) {
           return callback(null, true);
         }

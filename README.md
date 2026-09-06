@@ -104,7 +104,7 @@ Environment files are local inputs and must not be committed. Keep MongoDB crede
 | `MONGODB_URI` | Yes | None | MongoDB connection used by the API. Startup fails if the database is unavailable. |
 | `REDIS_URL` | Yes | None | Redis connection used by the API. Startup fails if Redis is unavailable. |
 | `PORT` | No | `3000` | API port. |
-| `ALLOWED_ORIGINS` | No | `http://localhost:5173` | Comma-separated browser origins allowed by the API. |
+| `ALLOWED_ORIGINS` | No | `http://localhost:5173` | Comma-separated browser origins allowed by the API. An entry may contain `*`, which matches within a single hostname label. |
 | `NODE_ENV` | No | Development behavior | Enables production logging and CORS behavior or test log suppression. |
 | `CHECKPOINT_COMMAND_INTERVAL` | No | `20` | Commands allowed between scheduled MongoDB checkpoints. |
 | `CHECKPOINT_TIME_INTERVAL_MS` | No | `30000` | Maximum time a dirty active game waits for a checkpoint. |
@@ -213,7 +213,15 @@ Atlas rejects connections from addresses outside its access list, and Fly machin
 
 ### 2. The API
 
-Create the app and the journal volume, set the two secrets, then deploy. `ALLOWED_ORIGINS` must exactly match the browser origin serving the UI, with no path or trailing slash, or gameplay requests and WebSocket upgrades are rejected.
+Create the app and the journal volume, set the two secrets, then deploy. `ALLOWED_ORIGINS` must match the browser origin serving the UI, with no path or trailing slash, or gameplay requests and WebSocket upgrades are rejected.
+
+Vercel gives every preview deployment its own hostname, so covering them takes a wildcard entry alongside the production origin. The `*` matches within one hostname label, which keeps the project and team suffix mandatory:
+
+```
+ALLOWED_ORIGINS=https://<your-ui-origin>,https://dungeon-crawler-ui-*-alexs-projects-19b7b594.vercel.app
+```
+
+Quote the value when passing it to `fly secrets set`, or the shell expands the `*` before flyctl sees it.
 
 ```bash
 export API_APP=dungeon-crawler-api
