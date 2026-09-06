@@ -1,3 +1,5 @@
+# Gameplay API. Redis is a separate app (fly.redis.toml) so the command journal
+# outlives an API deploy.
 app = "dungeon-crawler-api"
 primary_region = "lax"
 
@@ -11,16 +13,24 @@ PORT = "3000"
 auto_start_machines = true
 auto_stop_machines = "off"
 force_https = true
-internal_port = 3_000
+internal_port = 3000
 min_machines_running = 1
 
   [http_service.concurrency]
-  hard_limit = 1_000
+  hard_limit = 1000
   soft_limit = 800
   type = "connections"
+
+  # Liveness alone would keep routing traffic to a machine that has lost MongoDB
+  # or Redis.
+  [[http_service.http_checks]]
+  grace_period = "20s"
+  interval = "15s"
+  method = "GET"
+  path = "/health/dependencies"
+  timeout = "5s"
 
 [[vm]]
 cpus = 1
 memory = "256mb"
-memory_mb = 256
 size = "shared-cpu-1x"

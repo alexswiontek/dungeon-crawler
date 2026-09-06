@@ -1,4 +1,4 @@
-import type { LeaderboardEntry } from '@dungeon-crawler/shared';
+import type { LeaderboardEntry } from '@dungeon-crawler/domain/model';
 import type { FastifyInstance } from 'fastify';
 import { getDb } from '@/services/database.js';
 import { createErrorResponse, ErrorCode } from '@/types/apiErrors.js';

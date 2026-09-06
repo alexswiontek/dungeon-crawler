@@ -1,4 +1,4 @@
-import type { GameEvent } from '@dungeon-crawler/domain';
+import type { GameEvent } from '@dungeon-crawler/domain/model';
 import { create } from 'zustand';
 
 interface UiStore {

@@ -3,12 +3,38 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+    "./combat": {
+      "types": "./dist/combat.d.ts",
+      "import": "./dist/combat.js"
+    },
+    "./dungeon-generation": {
+      "types": "./dist/dungeon-generation.d.ts",
+      "import": "./dist/dungeon-generation.js"
+    },
+    "./enemies": {
+      "types": "./dist/enemies.d.ts",
+      "import": "./dist/enemies.js"
+    },
+    "./model": {
+      "types": "./dist/model.d.ts",
+      "import": "./dist/model.js"
+    },
+    "./random": {
+      "types": "./dist/random.d.ts",
+      "import": "./dist/random.js"
+    },
+    "./rules": {
+      "types": "./dist/rules.d.ts",
+      "import": "./dist/rules.js"
+    },
+    "./transition": {
+      "types": "./dist/transition.d.ts",
+      "import": "./dist/transition.js"
+    },
+    "./visibility": {
+      "types": "./dist/visibility.d.ts",
+      "import": "./dist/visibility.js"
     }
   },
   "scripts": {

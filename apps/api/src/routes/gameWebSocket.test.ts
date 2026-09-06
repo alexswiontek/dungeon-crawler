@@ -1,10 +1,10 @@
+import { projectGameState } from '@dungeon-crawler/protocol/client-projection';
 import {
-  GAMEPLAY_PROTOCOL_VERSION,
   type GameCommandResult,
+  GAMEPLAY_PROTOCOL_VERSION,
   GameWebSocketCloseCode,
   GameWebSocketServerMessageSchema,
-  projectGameState,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

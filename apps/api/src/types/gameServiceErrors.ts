@@ -1,7 +1,7 @@
 import type {
   GameErrorCode,
   VisibleGameState,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 
 export class GameServiceError extends Error {
   constructor(

@@ -1,20 +1,20 @@
-import type { GameCommand, GameEvent } from '@dungeon-crawler/domain';
+import type { GameCommand, GameEvent } from '@dungeon-crawler/domain/model';
 import {
   GAME_WEBSOCKET_BUFFERED_AMOUNT_LIMIT,
   GAME_WEBSOCKET_CLIENT_QUEUE_LIMIT,
-  GAMEPLAY_PROTOCOL_VERSION,
   type GameActionRequest,
   GameActionRequestSchema,
   GameCommandSchema,
   type GameDelta,
   type GameErrorResponse,
+  GAMEPLAY_PROTOCOL_VERSION,
   GameWebSocketCloseCode,
   type GameWebSocketCommandError,
   GameWebSocketCommandRequestSchema,
   type GameWebSocketCommandSuccess,
   GameWebSocketServerMessageSchema,
   type VisibleGameState,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 import { GameClientModel } from '@/game/GameClientModel';
 import {
   type CreateGameInput,

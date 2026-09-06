@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { GameTransition } from '@dungeon-crawler/domain';
+import type { GameTransition } from '@dungeon-crawler/domain/model';
 import { BSON, type Db, MongoClient } from 'mongodb';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type {

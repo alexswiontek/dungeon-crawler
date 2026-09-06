@@ -3,7 +3,7 @@ import {
   isEquipmentItem,
   MAP_HEIGHT,
   MAP_WIDTH,
-} from '@dungeon-crawler/shared';
+} from '@dungeon-crawler/domain/model';
 import type { AssetManagerClass, SpriteSheetKey } from '@/engine/AssetManager';
 import type {
   GameClientModel,

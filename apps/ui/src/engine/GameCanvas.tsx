@@ -1,4 +1,4 @@
-import type { Coordinate } from '@dungeon-crawler/shared';
+import type { Coordinate } from '@dungeon-crawler/domain/model';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AssetManagerClass } from '@/engine/AssetManager';
 import { Renderer } from '@/engine/Renderer';

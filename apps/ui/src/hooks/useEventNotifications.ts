@@ -1,4 +1,4 @@
-import type { GameEvent } from '@dungeon-crawler/shared';
+import type { GameEvent } from '@dungeon-crawler/domain/model';
 import { useEffect, useRef, useState } from 'react';
 import type { TooltipVariant } from '@/components/GameTooltip';
 

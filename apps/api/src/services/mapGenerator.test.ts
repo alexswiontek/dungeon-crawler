@@ -3,7 +3,7 @@ import {
   MAP_HEIGHT,
   MAP_WIDTH,
   type Tile,
-} from '@dungeon-crawler/shared';
+} from '@dungeon-crawler/domain/model';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { generateMap, initializeFog } from '@/test/helpers/gameplayAdapters.js';
 import {

@@ -2,7 +2,7 @@ import 'dotenv/config';
 import {
   GAME_WEBSOCKET_MESSAGE_SIZE_LIMIT,
   GAMEPLAY_PROTOCOL_HEADER,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 import cors, { type FastifyCorsOptions } from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';

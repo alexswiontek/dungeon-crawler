@@ -3,7 +3,7 @@ import {
   MAP_WIDTH,
   type Tile,
   type TileType,
-} from '@dungeon-crawler/shared';
+} from '@dungeon-crawler/domain/model';
 
 export function countTileType(map: Tile[][], type: TileType): number {
   let count = 0;

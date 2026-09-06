@@ -1,6 +1,6 @@
 import type { Db } from 'mongodb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MemoryGameJournal, type GameJournal } from '@/services/gameJournal.js';
+import { type GameJournal, MemoryGameJournal } from '@/services/gameJournal.js';
 import type {
   LeaderboardDoc,
   LegacyGameDocument,

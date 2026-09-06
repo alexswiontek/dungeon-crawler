@@ -1,16 +1,19 @@
+import {
+  type Enemy,
+  type Equipment,
+  type FacingDirection,
+  type GameEvent,
+  type GameStatus,
+  type Item,
+  MAP_HEIGHT,
+  MAP_WIDTH,
+  type PlayerEquipment,
+  type Tile,
+} from '@dungeon-crawler/domain/model';
 import type {
-  Enemy,
-  Equipment,
-  FacingDirection,
   GameDelta,
-  GameEvent,
-  GameStatus,
-  Item,
-  PlayerEquipment,
-  Tile,
   VisibleGameState,
-} from '@dungeon-crawler/shared';
-import { MAP_HEIGHT, MAP_WIDTH } from '@dungeon-crawler/shared';
+} from '@dungeon-crawler/protocol/schemas';
 
 /**
  * Test data builder for game store tests

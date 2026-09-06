@@ -1,4 +1,4 @@
-import type { LeaderboardEntry } from '@dungeon-crawler/shared';
+import type { LeaderboardEntry } from '@dungeon-crawler/domain/model';
 import { API_BASE_URL } from '@/config/apiBaseUrl';
 
 export const api = {

@@ -200,21 +200,34 @@ describe('Game Logic', () => {
         expect(state.score).toBe(150); // 50 + 100
       });
 
-      it('should grant 1000 victory bonus on floor 20', () => {
+      it('should grant 1000 victory bonus for escaping floor 20', () => {
         const state = createTestGameState({
           player: createTestPlayer({ x: 5, y: 5 }),
-          floor: 19,
+          floor: 20,
           score: 100,
         });
         state.map[5][5].type = 'stairs';
 
         descendStairs(state);
 
-        // Score should be: 100 (original) + 100 (descend bonus) + 1000 (victory bonus)
+        // Score should be: 100 (original) + 100 (stairs bonus) + 1000 (victory bonus)
         expect(state.score).toBe(1200);
       });
 
-      it('should win game at floor 20', () => {
+      it('should win the game on the floor 20 stairs', () => {
+        const state = createTestGameState({
+          player: createTestPlayer({ x: 5, y: 5 }),
+          floor: 20,
+        });
+        state.map[5][5].type = 'stairs';
+
+        descendStairs(state);
+
+        expect(state.floor).toBe(20);
+        expect(state.status).toBe('won');
+      });
+
+      it('should keep playing after descending to floor 20', () => {
         const state = createTestGameState({
           player: createTestPlayer({ x: 5, y: 5 }),
           floor: 19,
@@ -224,7 +237,7 @@ describe('Game Logic', () => {
         descendStairs(state);
 
         expect(state.floor).toBe(20);
-        expect(state.status).toBe('won');
+        expect(state.status).toBe('active');
       });
     });
   });

@@ -1,25 +1,27 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import {
-  createGame,
-  createSeededRandom,
   type GameEvent,
   type GameState,
   isPlayerDiedEvent,
-  reduceGame,
-} from '@dungeon-crawler/domain';
+} from '@dungeon-crawler/domain/model';
+import { createSeededRandom } from '@dungeon-crawler/domain/random';
+import { createGame, reduceGame } from '@dungeon-crawler/domain/transition';
 import {
   diffClientProjections,
+  projectGameState,
+} from '@dungeon-crawler/protocol/client-projection';
+import {
   type ExecuteGameCommandRequest,
-  GAMEPLAY_PROTOCOL_VERSION,
-  GameCommandSchema,
   type GameCommandResult,
+  GameCommandSchema,
+  GAMEPLAY_PROTOCOL_VERSION,
   type GameStateResponse,
   type NewGameRequest,
   type NewGameResponse,
-  projectGameState,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 import type { Db } from 'mongodb';
+import { getDb } from '@/services/database.js';
 import {
   GAME_REDUCER_VERSION,
   type GameJournal,
@@ -28,7 +30,6 @@ import {
   type LoadedGameJournal,
   RedisGameJournal,
 } from '@/services/gameJournal.js';
-import { getDb } from '@/services/database.js';
 import { getRedis } from '@/services/redis.js';
 import {
   createSessionToken,

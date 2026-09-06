@@ -1,8 +1,8 @@
-import type { GameEvent } from '@dungeon-crawler/shared';
 import {
+  type GameEvent,
   isPlayerAttackedEvent,
   isRangedAttackEvent,
-} from '@dungeon-crawler/shared';
+} from '@dungeon-crawler/domain/model';
 import { useEffect, useRef, useState } from 'react';
 import type { DamageEvent } from '@/components/DamageNumbers';
 

@@ -1,17 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { calculateRangedAttackPower } from './combat.js';
+import { createVisibilityMask } from './dungeon-generation.js';
+import type { GameCommand, GameState } from './model.js';
 import {
-  attackAtRange,
-  calculateRangedAttackPower,
-  createGame,
   createSeededRandom,
-  createVisibilityMask,
   fixedClock,
-  type GameCommand,
   type GameCommandContext,
-  type GameState,
-  movePlayer,
-  recalculateVisibility,
-} from './index.js';
+} from './random.js';
+import { attackAtRange, createGame, movePlayer } from './transition.js';
+import { recalculateVisibility } from './visibility.js';
 
 function context(seed = 'domain-test'): GameCommandContext {
   return {
@@ -187,8 +184,22 @@ describe('domain boundaries', () => {
     expect(state.player.level).toBe(2);
   });
 
-  it('emits floor transition and victory events', () => {
+  it('emits a floor transition and keeps playing below the final floor', () => {
     const state = stateFixture({ floor: 19 });
+    state.map[5][6] = { type: 'stairs', x: 6, y: 5 };
+
+    const transition = movePlayer(state, 'right', context('descend'));
+
+    expect(state).toMatchObject({ floor: 20, status: 'active' });
+    expect(state.enemies.length).toBeGreaterThan(0);
+    expect(transition.events.map((event) => event.type)).toEqual([
+      'player_moved',
+      'floor_descended',
+    ]);
+  });
+
+  it('emits victory when taking the stairs on the final floor', () => {
+    const state = stateFixture({ floor: 20 });
     state.map[5][6] = { type: 'stairs', x: 6, y: 5 };
 
     const transition = movePlayer(state, 'right', context('victory'));
@@ -196,7 +207,6 @@ describe('domain boundaries', () => {
     expect(state).toMatchObject({ floor: 20, status: 'won' });
     expect(transition.events.map((event) => event.type)).toEqual([
       'player_moved',
-      'floor_descended',
       'game_won',
     ]);
   });

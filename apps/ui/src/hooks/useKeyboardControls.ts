@@ -1,4 +1,4 @@
-import type { Direction } from '@dungeon-crawler/shared';
+import type { Direction } from '@dungeon-crawler/domain/model';
 import type { GameClientSnapshot } from '@/game/GameClientModel';
 
 const KEY_MAP = {

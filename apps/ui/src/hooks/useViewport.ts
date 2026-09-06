@@ -2,7 +2,7 @@ import {
   type Coordinate,
   MAP_HEIGHT,
   MAP_WIDTH,
-} from '@dungeon-crawler/shared';
+} from '@dungeon-crawler/domain/model';
 import { TILE_SIZE } from '@/sprites';
 
 const MOBILE_HEADER_HEIGHT = 60;

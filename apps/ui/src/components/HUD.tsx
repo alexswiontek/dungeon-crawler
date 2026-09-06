@@ -1,7 +1,5 @@
-import {
-  calculateRangedAttackPower,
-  type GameEvent,
-} from '@dungeon-crawler/domain';
+import { calculateRangedAttackPower } from '@dungeon-crawler/domain/combat';
+import type { GameEvent } from '@dungeon-crawler/domain/model';
 import type { GameClientSnapshot } from '@/game/GameClientModel';
 
 interface HUDProps {

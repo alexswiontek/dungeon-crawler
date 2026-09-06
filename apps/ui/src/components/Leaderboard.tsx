@@ -1,4 +1,4 @@
-import type { LeaderboardEntry } from '@dungeon-crawler/shared';
+import type { LeaderboardEntry } from '@dungeon-crawler/domain/model';
 import { useEffect, useState } from 'react';
 import { api } from '@/api';
 import { Button } from '@/components/Button';

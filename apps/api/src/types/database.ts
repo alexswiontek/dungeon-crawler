@@ -2,9 +2,9 @@ import type {
   EnemyType,
   EnemyVariant,
   GameState,
-  SeededRandomState,
-} from '@dungeon-crawler/domain';
-import type { GameCommandResult } from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/domain/model';
+import type { SeededRandomState } from '@dungeon-crawler/domain/random';
+import type { GameCommandResult } from '@dungeon-crawler/protocol/schemas';
 
 /** A bounded durable receipt for replaying action metadata without domain work. */
 export interface GameActionReceipt {

@@ -1,14 +1,7 @@
 import { on, once } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
-import {
-  GAME_WEBSOCKET_CLIENT_QUEUE_LIMIT,
-  GAMEPLAY_PROTOCOL_HEADER,
-  GAMEPLAY_PROTOCOL_VERSION,
-  GameCommandResultSchema,
-  GameWebSocketServerMessageSchema,
-  NewGameResponseSchema,
-} from '@dungeon-crawler/protocol';
+import { GAME_WEBSOCKET_CLIENT_QUEUE_LIMIT, GameCommandResultSchema, GAMEPLAY_PROTOCOL_HEADER, GAMEPLAY_PROTOCOL_VERSION, GameWebSocketServerMessageSchema, NewGameResponseSchema } from '@dungeon-crawler/protocol/schemas';
 import WebSocket from 'ws';
 
 const mode = process.argv[2];

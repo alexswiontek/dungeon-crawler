@@ -1,11 +1,9 @@
-import type {
-  GameActionRequest,
-  GameCommandResult,
-} from '@dungeon-crawler/protocol';
 import {
+  type GameActionRequest,
+  type GameCommandResult,
   GAMEPLAY_PROTOCOL_HEADER,
   GAMEPLAY_PROTOCOL_VERSION,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 import {
   act,
   fireEvent,

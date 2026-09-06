@@ -1,4 +1,7 @@
-import { CHARACTER_STATS, type CharacterType } from '@dungeon-crawler/shared';
+import {
+  CHARACTER_STATS,
+  type CharacterType,
+} from '@dungeon-crawler/domain/model';
 import { useState } from 'react';
 import { Button } from '@/components/Button';
 import { CHARACTER_SPRITES, SPRITE_SHEETS, TILE_SIZE } from '@/sprites';

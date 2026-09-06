@@ -1,6 +1,6 @@
 // All sprites are 32x32 pixels from the 32rogues asset pack
 
-import type { CharacterType, Coordinate } from '@dungeon-crawler/shared';
+import type { CharacterType, Coordinate } from '@dungeon-crawler/domain/model';
 
 export const TILE_SIZE = 32;
 

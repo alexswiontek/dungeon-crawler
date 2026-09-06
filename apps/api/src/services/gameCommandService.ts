@@ -1,25 +1,28 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import {
-  createGame,
-  createSeededRandom,
   type GameCommand,
   type GameEvent,
   type GameState,
   isPlayerDiedEvent,
-  reduceGame,
+} from '@dungeon-crawler/domain/model';
+import {
+  createSeededRandom,
   type StatefulRandomSource,
-} from '@dungeon-crawler/domain';
+} from '@dungeon-crawler/domain/random';
+import { createGame, reduceGame } from '@dungeon-crawler/domain/transition';
 import {
   diffClientProjections,
-  type ExecuteGameCommandRequest,
-  type GameCommandResult,
-  type GameErrorCode,
-  type GameStateResponse,
-  type NewGameRequest,
-  type NewGameResponse,
   projectGameState,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/client-projection';
+import type {
+  ExecuteGameCommandRequest,
+  GameCommandResult,
+  GameErrorCode,
+  GameStateResponse,
+  NewGameRequest,
+  NewGameResponse,
+} from '@dungeon-crawler/protocol/schemas';
 import type { Db, MongoServerError } from 'mongodb';
 import { getDb } from '@/services/database.js';
 import { createRedisGameCommandService } from '@/services/redisGameCommandService.js';
@@ -30,9 +33,9 @@ import {
 } from '@/services/sessionToken.js';
 import type {
   GameActionReceipt,
-  LegacyGameDocument,
   LeaderboardDelivery,
   LeaderboardDoc,
+  LegacyGameDocument,
   StoredGameDocument,
 } from '@/types/database.js';
 import { GameServiceError } from '@/types/gameServiceErrors.js';

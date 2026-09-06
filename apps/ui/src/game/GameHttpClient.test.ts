@@ -1,8 +1,8 @@
 import {
+  type GameActionRequest,
   GAMEPLAY_PROTOCOL_HEADER,
   GAMEPLAY_PROTOCOL_VERSION,
-  type GameActionRequest,
-} from '@dungeon-crawler/protocol';
+} from '@dungeon-crawler/protocol/schemas';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { gameWebSocketUrl, normalizeApiBaseUrl } from '@/config/apiBaseUrl';
 import {

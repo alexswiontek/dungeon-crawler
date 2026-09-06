@@ -5,7 +5,7 @@ import type {
   Item,
   Player,
   Tile,
-} from '@dungeon-crawler/domain';
+} from '@dungeon-crawler/domain/model';
 import type { GameDelta, VisibleGameState } from './schemas.js';
 
 function clonePlayer(player: Player): Player {

@@ -1,4 +1,4 @@
-import { reduceGame } from '@dungeon-crawler/domain';
+import { reduceGame } from '@dungeon-crawler/domain/transition';
 import type { Db } from 'mongodb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
