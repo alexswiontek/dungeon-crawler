@@ -228,7 +228,7 @@ fly status --app "$API_APP"
 curl --fail "https://${API_APP}.fly.dev/health/dependencies"
 ```
 
-The volume name has to stay `redis_data` to match the mount in `fly.toml`, and it must be in the machine's region. `REDIS_URL` comes from `[env]` in `fly.toml`; a secret of the same name would silently win over it.
+The volume name has to stay `redis_data` to match the mount in `fly.toml`, and it must be in the machine's region. `REDIS_URL` is not among the secrets, because the image points the API at the Redis it starts.
 
 The health response reports MongoDB and Redis separately, so a failure here identifies which dependency is unreachable. Fly also runs this route as the machine's health check, so a machine that loses either dependency stops receiving traffic.
 

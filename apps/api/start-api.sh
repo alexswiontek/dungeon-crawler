@@ -5,6 +5,9 @@ if [ "${EMBEDDED_REDIS:-}" != "true" ]; then
   exec node apps/api/dist/index.js
 fi
 
+# The API talks to the server started below, not to whatever the environment says.
+export REDIS_URL=redis://127.0.0.1:6379
+
 redis-server \
   --appendonly yes \
   --appendfsync everysec \

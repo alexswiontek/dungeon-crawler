@@ -7,7 +7,6 @@ dockerfile = "apps/api/Dockerfile"
 [env]
 PORT = "3000"
 EMBEDDED_REDIS = "true"
-REDIS_URL = "redis://127.0.0.1:6379"
 
 [http_service]
 auto_start_machines = true
